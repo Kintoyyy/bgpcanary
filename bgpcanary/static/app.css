@@ -27,9 +27,8 @@ header nav { display: flex; gap: 4px; overflow-x: auto; flex: 1; }
 header nav a { color: var(--muted); padding: 6px 10px; border-radius: 6px; white-space: nowrap; }
 header nav a.active, header nav a:hover { color: var(--text); background: var(--code-bg); text-decoration: none; }
 header .me { color: var(--muted); white-space: nowrap; font-size: 13px; }
-.wrap { max-width: 1320px; margin: 0 auto; padding: 0 16px; }
+.wrap { max-width: 1840px; margin: 0 auto; padding: 0 16px; }
 main.wrap { padding-top: 20px; padding-bottom: 40px; }
-main.wrap.wide { max-width: 1840px; }   /* long tables (Events): room for full timestamps and titles */
 h1 { font-size: 20px; margin: 0 0 16px; font-weight: 650; }
 h2 { font-size: 15px; margin: 0 0 12px; font-weight: 650; }
 .grid { display: grid; gap: 16px; }

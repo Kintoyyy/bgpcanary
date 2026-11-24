@@ -6,15 +6,19 @@ anything, and major releases may need you to read the notes before upgrading.
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-11-25
+
 ### Added
 - **Export the path tree as an MP4 video.** Next to *Export GIF* under the tree, *Export MP4* records the selected range as a video, drawn at 1.5x for sharper text. A browser that can't record MP4 (Firefox) saves WebM. The video is recorded in real time, so keep the tab open until it's saved.
 - **Set how long a replay takes.** *Length* (10 s to 2 minutes, 30 s by default) sets the pace of ▶ Play, the video and the GIF, in place of the old *Frame delay*. The first and last frame stay up 2 seconds more. The line next to it says how long each frame lasts and how much of the window it covers. GIFs were too fast: 80 frames at 150 ms ran through hours of routing in 12 seconds.
 - **Event captions.** A band over the tree names the warning and critical events open at the selected moment, with their severity and how long they've lasted, or says none is. It's on the screen and in exports, so a video makes sense to someone who doesn't know the strip's colours. Untick *Event captions* to leave it out.
+- **Open and close the tree's branches.** A big tree took a lot of scrolling. *Open* (over the tree) shows all of it, or only its first 1, 2 or 3 levels. Click a node or its name to open or close its branch, in any view. A closed node shows how many branches it holds (▸12), and its count includes them. The choice is remembered, and the open branches stay open when the data reloads and in exports.
+- **Show one upstream's branch alone.** *Upstream* (over the tree) picks one of your upstreams, or the exchanges. The other branches are hidden, and their peers still count at your AS. It works with *Open*, stays picked when the data reloads, and applies to exports.
 - **Events › Export CSV** saves every event that matches the filters, not just the page shown, with start and end times in UTC, duration, type, prefix, title, lowest visibility and a link to each.
 
 ### Changed
 - **This copy is a fork: it points at [Kintoyyy/bgpcanary](https://github.com/Kintoyyy/bgpcanary).** Update checks, `bgpcanary-update`, the container image (`ghcr.io/kintoyyy/bgpcanary`) and the documentation's links use the fork. *Settings › About & updates* credits the original, [gregsowell/bgpcanary](https://github.com/gregsowell/bgpcanary) by The Brothers WISP. The support link in the header is gone. The entries below this release keep their links to the original.
-- **The Events page uses more of a wide screen, and its times stay on one line.** The start, end and duration columns no longer wrap.
+- **Every page uses more of a wide screen** (up to 1840 px, was 1320). On the Events page the start, end and duration columns no longer wrap.
 - **Large networks and peerings: the path tree loads and moves much faster.**
   - Finding where each RIS peer's route stood at the start of a replay read the prefix's whole stored history. On a prefix with 1.5 million stored updates that took 20 seconds and more; it now takes about half a second.
   - A new index on the stored updates, by prefix and time, lets a replay read just its own stretch of time: 7x faster on a month of history. It takes about 30 bytes per stored update, and building it makes the first start after upgrading take a little longer on a large database (about 6 seconds per 3 million updates).

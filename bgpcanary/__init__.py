@@ -1,4 +1,4 @@
 """bgpcanary: BGP visibility and reachability monitor for networks with their own ASN."""
 
-__version__ = "1.7.7"
+__version__ = "1.8.0"
 REPO = "Kintoyyy/bgpcanary"   # GitHub owner/name: update checks and `bgpcanary-update` fetch releases from here

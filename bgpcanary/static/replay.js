@@ -80,6 +80,8 @@
       this.events = data.events || (data.event ? [data.event] : []);
       this.marks = data.marks || [];   // (an event's page: what else went on around it, see markColor)
       this.paths = data.paths.map(s => s.split(" ").map(Number));
+      this.toggled = new Set();   // branches opened or closed by a click (see build)
+      this.only = null;           // the one upstream (or "x", the exchanges) to show, as its key "asn>upstream"
       // origin first. Peers (data.exchanges: peer -> exchange) hang off one "Exchanges" branch, split per exchange:
       // origin > "x" > "x:<n>" > peer > ... (two virtual hops; transit branches are unchanged)
       const ex = data.exchanges || {};
@@ -158,7 +160,8 @@
     visible() { return this._visibleNow(this.cur); }
 
     // ---- tree structure -------------------------------------------------------------
-    build(depth, topN, nbrs = "all") {
+    // openDepth: nodes this deep start closed (Infinity: the whole tree); a key in this.toggled flips its node
+    build(depth, topN, nbrs = "all", openDepth = Infinity) {
       this.depth = depth; this.nbrs = nbrs;
       const key = (r, l) => r.slice(0, l + 1).join(">");
       this.chains = this.rev.map(r => {
@@ -243,11 +246,18 @@
         // collapse: keep topN children (pinned ones always), fold the rest into "others"
         const disp = new Map(), shown = new Map();
         const visit = (k, level, parent) => {
+          if (level === 1 && this.only && k !== this.only) return;   // another upstream: filtered out
           const last = k.split(">").pop();
           const xg = last === "x" ? "all" : last.startsWith("x:") ? this.xnames[Number(last.slice(2))] : null;
           shown.set(k, { key: k, level, asn: Number(last), xg, parent, children: [], max: maxC.get(k) || 0 });
           disp.set(k, k);
           if (parent) shown.get(parent).children.push(k);
+          if (level && (level >= openDepth) !== this.toggled.has(k) && kids.has(k)) {   // closed: its branch counts here
+            shown.get(k).closed = kids.get(k).size;
+            const mark = n => { for (const c of kids.get(n) || []) { disp.set(c, k); mark(c); } };
+            mark(k);
+            return;
+          }
           const ch = [...(kids.get(k) || [])].sort((a, b) => ((maxC.get(b) || 0) - (maxC.get(a) || 0)) || (pw(b) - pw(a)));
           const top = [], rest = [];
           let free = 0;
@@ -280,18 +290,23 @@
         this.layout();
         return disp;
       };
-      let disp = shape();
-      this.trimmed = false;
-      if (this.rows > ROWS && mode === "all") { mode = "fold"; this.trimmed = true; disp = shape(); }
-      for (let L = depth - 1; this.rows > ROWS && L >= 1;) {
-        if (caps[L] > 1) { caps[L] = Math.ceil(caps[L] / 2); this.trimmed = true; disp = shape(); } else L--;
-      }
-      this.dchains = this.chains.map(c => {
-        const out = [];
-        for (const k of c) { const d = disp.get(k); if (!out.length || out[out.length - 1] !== d) out.push(d); if (d.endsWith("*")) break; }
-        return out;
-      });
-      this.base = this.countsFor(this.baseState, this.dchains);
+      // (again on a click that opens or closes a branch: the expensive part above is done once)
+      this.reshape = () => {
+        caps.fill(topN); mode = nbrs;
+        let disp = shape();
+        this.trimmed = false;
+        if (this.rows > ROWS && mode === "all") { mode = "fold"; this.trimmed = true; disp = shape(); }
+        for (let L = depth - 1; this.rows > ROWS && L >= 1;) {
+          if (caps[L] > 1) { caps[L] = Math.ceil(caps[L] / 2); this.trimmed = true; disp = shape(); } else L--;
+        }
+        this.dchains = this.chains.map(c => {
+          const out = [];
+          for (const k of c) { const d = disp.get(k); if (d === undefined) break; if (!out.length || out[out.length - 1] !== d) out.push(d); if (d.endsWith("*")) break; }
+          return out;
+        });
+        this.base = this.countsFor(this.baseState, this.dchains);
+      };
+      this.reshape();
     }
     _reachNow() {
       // per network in a current path toward you: {c: RIS peers whose path has it, via: its most common next hop
@@ -604,6 +619,7 @@
           const nm = (this.D.names[n.asn] || "").split(/[ ,]/)[0];
           label = `AS${n.asn}${n.level === 0 && n.asn === this.D.asn ? " (you)" : nm ? " " + nm.slice(0, 14) : ""}`;
         }
+        if (n.closed) label += ` ▸${n.closed}`;
         ctx.font = (n.level <= 1 || n.xg ? "600 " : "") + "12px system-ui, sans-serif";
         ctx.fillStyle = st === "idle" || st === "lost" || soft(st) ? th.muted : th.text;
         const lxp = x + r + 5;
@@ -796,6 +812,25 @@
       nbrsSel.onchange = () => { try { localStorage.setItem("bgpcanary.treeNbrs", nbrsSel.value); } catch (e) { } rebuild(); };
     }
     const nbrsMode = () => (nbrsSel ? nbrsSel.value : "all");
+    // Open: the whole tree, or only its first levels with a click on a node opening or closing its branch
+    const openSel = q("open"), toggled = new Set();   // (kept when the data reloads)
+    // Upstream: one upstream's branch (or the exchanges') alone; the list is filled from each load
+    const onlySel = q("only");
+    const onlyKey = () => (onlySel && onlySel.value ? `${data.asn}>${onlySel.value}` : null);
+    const fillOnly = () => {
+      if (!onlySel) return;
+      const keep = onlySel.value, nm = a => (data.names[a] || "").split(/[ ,]/)[0];
+      const opts = [["", "all"], ...(data.upstreams || []).map(u => [String(u), `AS${u} ${nm(u)}`]),
+                    ...(Object.keys(data.exchanges || {}).length ? [["x", "Exchanges"]] : [])];
+      onlySel.replaceChildren(...opts.map(([v, t]) => new Option(t, v)));
+      onlySel.value = opts.some(o => o[0] === keep) ? keep : "";
+    };
+    if (onlySel) onlySel.onchange = () => { if (rp) { rp.only = onlyKey(); rp.reshape(); render(); } };
+    const openDepth = () => (openSel && openSel.value !== "all" ? parseInt(openSel.value) : Infinity);
+    if (openSel) {
+      try { const v = localStorage.getItem("bgpcanary.treeOpen"); if ([...openSel.options].some(o => o.value === v)) openSel.value = v; } catch (e) { }
+      openSel.onchange = () => { try { localStorage.setItem("bgpcanary.treeOpen", openSel.value); } catch (e) { } toggled.clear(); rebuild(); };
+    }
     // Length (seconds from start to end, for ▶ Play and exports), Frames, and Event captions: remembered like Size
     const remember = (el, key, get, set) => {
       if (!el) return;
@@ -872,7 +907,7 @@
     let loaded = "";   // the status line after a load
     const rebuild = () => {
       if (!rp) return;
-      rp.build(parseInt(q("depth").value), parseInt(q("top").value), nbrsMode());
+      rp.build(parseInt(q("depth").value), parseInt(q("top").value), nbrsMode(), openDepth());
       status.textContent = loaded + (rp.trimmed ? " · a large tree: smaller branches are folded into \u201c+N more\u201d (point at one to see them)" : "");
       render();
     };
@@ -894,6 +929,8 @@
       data = await r.json();
       if (!data.peers.length) { status.textContent = "No stored updates cover this window."; rp = null; return; }
       rp = new Replay(data, q("base") ? q("base").value : (opts.base || "best"));
+      rp.toggled = toggled;
+      fillOnly(); rp.only = onlyKey();
       status.textContent = loaded = `${data.peers.length} RIS peers · ${data.updates.length.toLocaleString()} updates in window`;
       rebuild();
       if (!keepPosition || !rangeCustom) { setRangeInputs(data.start, data.end); rangeCustom = false; }
@@ -918,9 +955,14 @@
     q("depth").onchange = rebuild; q("top").onchange = rebuild;
     if (q("base")) q("base").onchange = () => { if (rp) { rp.setBase(q("base").value); render(); } };
     window.addEventListener("resize", render);
+    // a node that has a branch, or its label: open or close that branch
+    const branchAt = (x, y) => (rp.hit || []).find(h => (h.n.closed || (h.n.children.length && h.n.level > 0))
+      && x >= h.x - h.r - 2 && x <= h.x + h.r + 170 && Math.abs(y - h.y) <= Math.max(h.r, 9));
     canvas.addEventListener("click", e => {
       if (!rp) return;
       const b = canvas.getBoundingClientRect(), x = (e.clientX - b.left) / k, y = (e.clientY - b.top) / k, tl = rp.timeline;
+      const br = branchAt(x, y);
+      if (br) { toggled.has(br.k) ? toggled.delete(br.k) : toggled.add(br.k); rp.reshape(); render(); return; }
       if (tl && y >= tl.ty - (rp.marks.length ? 28 : 8) && y <= tl.ty + tl.th2 + 6) {   // (pins stand above the strip)
         const per = (data.end - data.start) / (tl.tx1 - tl.tx0), t = data.start + (x - tl.tx0) * per;
         // a click on a pin or on an event's mark, or a few pixels off it, goes to that moment exactly
@@ -933,6 +975,7 @@
       if (!rp) return;
       const b = canvas.getBoundingClientRect(), x = (e.clientX - b.left) / k, y = (e.clientY - b.top) / k;
       const h = (rp.hit || []).find(h => (h.x - x) ** 2 + (h.y - y) ** 2 <= (h.r + 3 / k) ** 2);
+      canvas.style.cursor = branchAt(x, y) ? "pointer" : "default";
       // the tooltip stays inside the tree's panel (which clips it): to the left of the cursor near the right edge,
       // above it near the bottom
       const showTip = text => {
@@ -994,9 +1037,11 @@
         : kind === "never" ? `\nRIS sees no route from it to you at all, through AS${of} or any other way.${verdict}`
         : pin && !h.c && !h.b ? (peak ? `\nNot carrying you now (carried up to ${peak} peers earlier in this window)`
                                       : "\nCarried none of your paths in this window") : "";
+      const fold = h.n.closed ? `\nClick to open its ${h.n.closed} branch${h.n.closed === 1 ? "" : "es"}`
+        : h.n.children.length && h.n.level > 0 ? "\nClick to close this branch" : "";
       showTip(h.per
-        ? `${nm}${role}\n` + h.per.map((v, p) => `${data.prefixes[p]}: ${v ? v + " peers" : "MISSING on this branch"}`).join("\n")
-        : `${nm}${role}\nAt selected time: ${h.c} peers · ${ref}: ${h.b}${moved}${never}`);
+        ? `${nm}${role}\n` + h.per.map((v, p) => `${data.prefixes[p]}: ${v ? v + " peers" : "MISSING on this branch"}`).join("\n") + fold
+        : `${nm}${role}\nAt selected time: ${h.c} peers · ${ref}: ${h.b}${moved}${never}${fold}`);
     });
     canvas.addEventListener("mouseleave", () => tip.style.display = "none");
     if (q("play")) q("play").onclick = () => {
@@ -1057,7 +1102,8 @@
           if (rp.ev) { d2.event = rp.ev; d2.events = [rp.ev, ...(d2.events || []).filter(e => e.id !== rp.ev.id)]; }
           if (rp.marks.length) d2.marks = rp.marks;
           g = new Replay(d2, rp.ev && a < rp.ev.start ? rp.baseMode : (q("base") ? q("base").value : "start"));
-          g.build(parseInt(q("depth").value), parseInt(q("top").value), nbrsMode());
+          g.toggled = toggled; g.only = rp.only;
+          g.build(parseInt(q("depth").value), parseInt(q("top").value), nbrsMode(), openDepth());
         }
         g.rowH = 20;   // exports always use full spacing, whatever the on-screen Size setting
         g.captions = !!(capBox && capBox.checked);
