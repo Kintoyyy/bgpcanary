@@ -93,6 +93,7 @@ dl.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 }
 .rp-wrap { position: relative; overflow-x: auto; }
 .rp-wrap canvas { display: block; cursor: default; }
+.rp-only, .rp-only [data-rp=only] { display: inline-flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; }
 .rp-tip { position: absolute; display: none; pointer-events: none; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--text); color: var(--panel); font-size: 12px; line-height: 1.35; padding: 6px 8px; border-radius: 6px; z-index: 5; max-width: 400px; }
 .rp-slider { width: 100%; margin: 8px 0 4px; }
 [hidden] { display: none !important; }   /* (also on elements whose class sets a display) */

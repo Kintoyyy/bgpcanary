@@ -81,7 +81,7 @@
       this.marks = data.marks || [];   // (an event's page: what else went on around it, see markColor)
       this.paths = data.paths.map(s => s.split(" ").map(Number));
       this.toggled = new Set();   // branches opened or closed by a click (see build)
-      this.only = null;           // the one upstream (or "x", the exchanges) to show, as its key "asn>upstream"
+      this.only = null;           // the upstreams (or "x", the exchanges) to show, as keys "asn>upstream"; null: all
       // origin first. Peers (data.exchanges: peer -> exchange) hang off one "Exchanges" branch, split per exchange:
       // origin > "x" > "x:<n>" > peer > ... (two virtual hops; transit branches are unchanged)
       const ex = data.exchanges || {};
@@ -246,7 +246,7 @@
         // collapse: keep topN children (pinned ones always), fold the rest into "others"
         const disp = new Map(), shown = new Map();
         const visit = (k, level, parent) => {
-          if (level === 1 && this.only && k !== this.only) return;   // another upstream: filtered out
+          if (level === 1 && this.only && !this.only.has(k)) return;   // an upstream unticked: hidden
           const last = k.split(">").pop();
           const xg = last === "x" ? "all" : last.startsWith("x:") ? this.xnames[Number(last.slice(2))] : null;
           shown.set(k, { key: k, level, asn: Number(last), xg, parent, children: [], max: maxC.get(k) || 0 });
@@ -744,18 +744,94 @@
       ctx.restore();
     }
     frameTimes(n, T0 = this.D.start, T1 = this.D.end) {
-      // half uniform in time, half following update activity, so frames linger where things change
+      // half uniform in time, half following update activity, so frames linger where things change; between two
+      // updates it moves on evenly, so the time never jumps
       const ts = this.U.map(u => u[0]).filter(t => t >= T0 && t <= T1);
       const out = [];
       for (let i = 0; i < n; i++) {
         const f = n === 1 ? 0 : i / (n - 1);
-        const uni = T0 + f * (T1 - T0);
-        const q = ts.length ? ts[Math.min(ts.length - 1, Math.floor(f * (ts.length - 1)))] : uni;
+        const uni = T0 + f * (T1 - T0), x = f * (ts.length - 1), j = Math.floor(x);
+        const q = ts.length ? ts[j] + (x - j) * ((ts[j + 1] ?? ts[j]) - ts[j]) : uni;
         out.push(Math.min(T1, Math.max(T0, 0.5 * uni + 0.5 * q)));
       }
       out[0] = T0; out[n - 1] = T1;
       return out;
     }
+  }
+
+  // A video any player opens, Windows' included: H.264 from the browser's own encoder (WebCodecs), written as a plain
+  // MP4 at a constant frame rate with its index in front. (MediaRecorder's MP4 is fragmented and stamped by the wall
+  // clock: Windows' players said "something went wrong".) null when the browser can't encode H.264.
+  async function encodeMp4(canvas, count, fps, drawFrame, progress) {
+    if (!window.VideoEncoder) return null;
+    const w = canvas.width, h = canvas.height;
+    let cfg = null;
+    for (const codec of ["avc1.640033", "avc1.4d0033", "avc1.420033"]) {   // High, Main, Baseline; level 5.1
+      const c = { codec, width: w, height: h, bitrate: 8e6, framerate: fps, avc: { format: "avc" } };
+      try { if ((await VideoEncoder.isConfigSupported(c)).supported) { cfg = c; break; } } catch (e) { }
+    }
+    if (!cfg) return null;
+    const samples = [];
+    let avcC = null, fail = null, lastTs = -1;
+    const enc = new VideoEncoder({
+      output: (chunk, meta) => {
+        const d = meta && meta.decoderConfig && meta.decoderConfig.description;
+        if (d && !avcC) avcC = new Uint8Array(ArrayBuffer.isView(d) ? d.buffer.slice(d.byteOffset, d.byteOffset + d.byteLength) : d);
+        if (chunk.timestamp <= lastTs) fail = fail || "the video encoder reordered frames";   // (no B-frames expected)
+        lastTs = chunk.timestamp;
+        const b = new Uint8Array(chunk.byteLength);
+        chunk.copyTo(b);
+        samples.push({ b, key: chunk.type === "key" });
+      },
+      error: e => { fail = e; },
+    });
+    enc.configure(cfg);
+    for (let i = 0; i < count && !fail; i++) {
+      drawFrame(i);
+      const f = new VideoFrame(canvas, { timestamp: Math.round(i * 1e6 / fps), duration: Math.round(1e6 / fps) });
+      enc.encode(f, { keyFrame: i % (2 * fps) === 0 });
+      f.close();
+      if (enc.encodeQueueSize > 6) await new Promise(r => enc.addEventListener("dequeue", r, { once: true }));
+      if (i % 15 === 0) { progress(i / count); await new Promise(r => setTimeout(r)); }   // (lets the page repaint)
+    }
+    if (!fail) await enc.flush();
+    enc.close();
+    if (fail) throw fail;
+    if (!avcC || samples.length !== count) throw "the video encoder lost frames";
+    return mp4File(samples, w, h, avcC, fps);
+  }
+
+  // ISO BMFF: ftyp, moov (one H.264 track: every sample in one chunk), mdat
+  function mp4File(samples, w, h, avcC, fps) {
+    const u32 = n => [n >>> 24 & 255, n >>> 16 & 255, n >>> 8 & 255, n & 255], u16 = n => [n >>> 8 & 255, n & 255];
+    const str = s => [...s].map(c => c.charCodeAt(0)), zeros = n => new Array(n).fill(0);
+    const box = (type, ...parts) => { const b = parts.flat(Infinity); return [...u32(8 + b.length), ...str(type), ...b]; };
+    const full = (type, version, flags, ...parts) => box(type, version, u32(flags).slice(1), ...parts);
+    const T = 30000, D = T / fps, n = samples.length, dur = n * D;
+    const matrix = [0x10000, 0, 0, 0, 0x10000, 0, 0, 0, 0x40000000].map(u32);
+    const keys = samples.flatMap((s, i) => (s.key ? [u32(i + 1)] : []));
+    const moov = at => box("moov",
+      full("mvhd", 0, 0, u32(0), u32(0), u32(T), u32(dur), u32(0x10000), u16(0x100), u16(0), zeros(8), matrix, zeros(24), u32(2)),
+      box("trak",
+        full("tkhd", 0, 3, u32(0), u32(0), u32(1), u32(0), u32(dur), zeros(8), u16(0), u16(0), u16(0), u16(0), matrix, u32(w * 65536), u32(h * 65536)),
+        box("mdia",
+          full("mdhd", 0, 0, u32(0), u32(0), u32(T), u32(dur), u16(0x55c4), u16(0)),   // (language "und")
+          full("hdlr", 0, 0, u32(0), str("vide"), zeros(12), str("VideoHandler"), 0),
+          box("minf",
+            full("vmhd", 0, 1, zeros(8)),
+            box("dinf", full("dref", 0, 0, u32(1), full("url ", 0, 1))),
+            box("stbl",
+              full("stsd", 0, 0, u32(1), box("avc1", zeros(6), u16(1), zeros(16), u16(w), u16(h), u32(0x480000), u32(0x480000),
+                                             u32(0), u16(1), zeros(32), u16(0x18), u16(0xffff), box("avcC", Array.from(avcC)))),
+              full("stts", 0, 0, u32(1), u32(n), u32(D)),
+              full("stss", 0, 0, u32(keys.length), keys),
+              full("stsc", 0, 0, u32(1), u32(1), u32(n), u32(1)),
+              full("stsz", 0, 0, u32(0), u32(n), samples.map(s => u32(s.b.length))),
+              full("stco", 0, 0, u32(1), u32(at)))))));
+    const ftyp = box("ftyp", str("isom"), u32(0x200), str("isomiso2avc1mp41"));
+    const size = samples.reduce((s, x) => s + x.b.length, 0), head = ftyp.length + moov(0).length;
+    return new Blob([new Uint8Array(ftyp), new Uint8Array(moov(head + 8)), new Uint8Array([...u32(8 + size), ...str("mdat")]),
+                     ...samples.map(s => s.b)], { type: "video/mp4" });
   }
 
   function loadScript(src) {
@@ -814,18 +890,29 @@
     const nbrsMode = () => (nbrsSel ? nbrsSel.value : "all");
     // Open: the whole tree, or only its first levels with a click on a node opening or closing its branch
     const openSel = q("open"), toggled = new Set();   // (kept when the data reloads)
-    // Upstream: one upstream's branch (or the exchanges') alone; the list is filled from each load
-    const onlySel = q("only");
-    const onlyKey = () => (onlySel && onlySel.value ? `${data.asn}>${onlySel.value}` : null);
-    const fillOnly = () => {
-      if (!onlySel) return;
-      const keep = onlySel.value, nm = a => (data.names[a] || "").split(/[ ,]/)[0];
-      const opts = [["", "all"], ...(data.upstreams || []).map(u => [String(u), `AS${u} ${nm(u)}`]),
-                    ...(Object.keys(data.exchanges || {}).length ? [["x", "Exchanges"]] : [])];
-      onlySel.replaceChildren(...opts.map(([v, t]) => new Option(t, v)));
-      onlySel.value = opts.some(o => o[0] === keep) ? keep : "";
+    // Upstreams: a tick box per upstream and one for the exchanges; the unticked ones' branches are hidden. The boxes
+    // are made afresh on each load; what's unticked stays unticked.
+    const onlyBox = q("only"), hidden = new Set();
+    const onlyKey = () => {
+      const keys = [...onlyBox.querySelectorAll("input")].filter(i => i.checked).map(i => `${data.asn}>${i.value}`);
+      return hidden.size ? new Set(keys) : null;
     };
-    if (onlySel) onlySel.onchange = () => { if (rp) { rp.only = onlyKey(); rp.reshape(); render(); } };
+    const fillOnly = () => {
+      if (!onlyBox) return;
+      const nm = a => (data.names[a] || "").split(/[ ,]/)[0];
+      const opts = [...(data.upstreams || []).map(u => [String(u), `AS${u} ${nm(u)}`]),
+                    ...(Object.keys(data.exchanges || {}).length ? [["x", "Exchanges"]] : [])];
+      onlyBox.replaceChildren(...opts.map(([v, t]) => {
+        const l = document.createElement("label"), i = document.createElement("input");
+        i.type = "checkbox"; i.value = v; i.checked = !hidden.has(v);
+        l.append(i, " " + t.trim());
+        return l;
+      }));
+    };
+    if (onlyBox) onlyBox.onchange = e => {
+      e.target.checked ? hidden.delete(e.target.value) : hidden.add(e.target.value);
+      if (rp) { rp.only = onlyKey(); rp.reshape(); render(); }
+    };
     const openDepth = () => (openSel && openSel.value !== "all" ? parseInt(openSel.value) : Infinity);
     if (openSel) {
       try { const v = localStorage.getItem("bgpcanary.treeOpen"); if ([...openSel.options].some(o => o.value === v)) openSel.value = v; } catch (e) { }
@@ -846,7 +933,7 @@
     const pace = () => {
       if (!q("pace") || !data) return;
       const [a, b] = range(), n = parseInt(frSel.value);
-      q("pace").textContent = `${Math.round(lengthMs() / (n - 1))} ms a frame, each about ${dur((b - a) / (n - 1))} of the window`;
+      q("pace").textContent = `video: 30 frames a second · GIF: ${Math.round(lengthMs() / (n - 1))} ms a frame, each about ${dur((b - a) / (n - 1))} of the window`;
     };
     if (lenSel) lenSel.addEventListener("change", pace);
     if (frSel) frSel.addEventListener("change", pace);
@@ -930,7 +1017,7 @@
       if (!data.peers.length) { status.textContent = "No stored updates cover this window."; rp = null; return; }
       rp = new Replay(data, q("base") ? q("base").value : (opts.base || "best"));
       rp.toggled = toggled;
-      fillOnly(); rp.only = onlyKey();
+      fillOnly(); rp.only = onlyBox ? onlyKey() : null;
       status.textContent = loaded = `${data.peers.length} RIS peers · ${data.updates.length.toLocaleString()} updates in window`;
       rebuild();
       if (!keepPosition || !rangeCustom) { setRangeInputs(data.start, data.end); rangeCustom = false; }
@@ -1073,10 +1160,9 @@
       const lo = rp.visSeries.reduce((m, v) => (v[0] >= from && v[1] < m[1] ? v : m), [from, Infinity]);
       setT(lo[0]);
     };
-    // Export the selected range as a GIF or a video (MP4 where the browser can record it, else WebM). Length / Frames
-    // set the pace; the first and last frame stay up HOLD ms more.
-    const HOLD = 2000;
-    const VIDEO_TYPES = ["video/mp4;codecs=avc1.640033", "video/mp4;codecs=avc1", "video/mp4", "video/webm;codecs=vp9", "video/webm"];
+    // Export the selected range as an MP4 (WebM where the browser can't encode H.264) or a GIF, Length long; the first
+    // and last frame stay up HOLD ms more. A bar on top of every frame shows the time large.
+    const HOLD = 2000, FPS = 30, TOPH = 46;
     const sleep = ms => new Promise(res => setTimeout(res, ms));
     async function exportAs(kind) {
       if (!rp) return;
@@ -1084,8 +1170,6 @@
       btns.forEach(b => { b.disabled = true; }); stop();
       const keepT = rp.t, keepRowH = rp.rowH;
       try {
-        const type = kind === "video" && VIDEO_TYPES.find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t));
-        if (kind === "video" && !type) throw "this browser can't record video: try Export GIF";
         const nFrames = parseInt(frSel.value), delay = Math.max(20, Math.round(lengthMs() / (nFrames - 1)));
         const [a, b] = range();
         if (!(b > a)) throw "the From time must be before the To time";
@@ -1107,17 +1191,29 @@
         }
         g.rowH = 20;   // exports always use full spacing, whatever the on-screen Size setting
         g.captions = !!(capBox && capBox.checked);
-        const W = 1200, { H } = g.size(W);
-        // a video is drawn 1.5x for sharper text, even-sized and within H.264's 4096x2304
-        const sc = kind === "video" ? Math.min(1.5, 2304 / H) : 1;
+        const W = 1200, H = g.size(W).H + TOPH;
+        // a video is drawn 1.5x for sharper text, even-sized and at most 2160 high (4K: every player decodes it)
+        const sc = kind === "video" ? Math.min(1.5, 2160 / H) : 1;
         const off = document.createElement("canvas");
         off.width = 2 * Math.round(W * sc / 2); off.height = 2 * Math.round(H * sc / 2);
         const ctx = off.getContext("2d", { willReadFrequently: kind === "gif" });
         ctx.setTransform(sc, 0, 0, sc, 0, 0);
         const label = rp.ev ? `event ${rp.ev.id}` : data.stitch ? `events ${rp.events.map(e => e.id).join(", ")}` : `${data.prefix}`;
-        const frame = t => { g.seek(t); g.draw(ctx, W, { footer: `bgpcanary · ${label}` }); };
+        let drawn = null;
+        const frame = t => {
+          if (t === drawn) return;   // (a held frame is drawn once)
+          drawn = t; g.seek(t);
+          const th = theme();
+          ctx.fillStyle = th.bg; ctx.fillRect(0, 0, W, TOPH);
+          ctx.textBaseline = "middle"; ctx.fillStyle = th.text; ctx.font = "700 26px system-ui, sans-serif";
+          ctx.fillText(g.when(t), 16, TOPH / 2 + 4);
+          const ph = g.phase();
+          ctx.font = "16px system-ui, sans-serif"; ctx.fillStyle = th.muted;
+          ctx.fillText(ph, W - 16 - ctx.measureText(ph).width, TOPH / 2 + 4);
+          ctx.save(); ctx.translate(0, TOPH); g.draw(ctx, W, { footer: `bgpcanary · ${label}` }); ctx.restore();
+        };
         const times = g.frameTimes(nFrames, a, b), wait = i => (i === 0 || i === times.length - 1 ? HOLD : delay);
-        let blob;
+        let blob = null;
         if (kind === "gif") {
           gs.textContent = "Loading encoder…";
           await loadScript("/static/vendor/gif.js");
@@ -1130,26 +1226,31 @@
           gif.on("progress", p => { gs.textContent = `Encoding GIF ${Math.round(p * 100)}%…`; });
           blob = await new Promise(res => { gif.on("finished", res); gif.render(); });
         } else {
-          // MediaRecorder stamps frames by the wall clock, so the video is recorded in real time, at the chosen pace
-          const stream = off.captureStream(0), track = stream.getVideoTracks()[0];
-          const rec = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: 8e6 }), chunks = [];
-          rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
-          const done = new Promise(res => { rec.onstop = res; });
-          const total = Math.round((lengthMs() + 2 * HOLD) / 1000);
-          rec.start();
-          for (let i = 0; i < times.length; i++) {
-            frame(times[i]); track.requestFrame();
-            if (i % 5 === 0) gs.textContent = `Recording ${Math.round((i + 1) / times.length * 100)}%: about ${total}s in all, in real time, so keep this tab open…`;
-            await sleep(wait(i));
+          // 30 frames a second, each a moment of its own: the timeline moves smoothly
+          const hold = HOLD / 1000 * FPS, vt = g.frameTimes(Math.max(2, Math.round(lengthMs() / 1000 * FPS)), a, b);
+          blob = await encodeMp4(off, vt.length + 2 * hold, FPS, i => frame(vt[Math.min(vt.length - 1, Math.max(0, i - hold))]),
+                                 p => { gs.textContent = `Encoding video ${Math.round(p * 100)}%…`; });
+          if (!blob) {   // no H.264 encoder: WebM, recorded in real time (MediaRecorder stamps frames by the wall clock)
+            const type = ["video/webm;codecs=vp9", "video/webm"].find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t));
+            if (!type) throw "this browser can't make a video: try Export GIF";
+            const stream = off.captureStream(0), track = stream.getVideoTracks()[0];
+            const rec = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: 8e6 }), chunks = [];
+            rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+            const done = new Promise(res => { rec.onstop = res; });
+            rec.start();
+            for (let i = 0; i < times.length; i++) {
+              frame(times[i]); track.requestFrame();
+              if (i % 5 === 0) gs.textContent = `Recording ${Math.round((i + 1) / times.length * 100)}% in real time: keep this tab open…`;
+              await sleep(wait(i));
+            }
+            drawn = null; frame(times[times.length - 1]); track.requestFrame();   // (redrawn: Chrome skips an unchanged canvas)
+            await sleep(50);
+            rec.stop(); await done;
+            stream.getTracks().forEach(t => t.stop());
+            blob = new Blob(chunks, { type: "video/webm" });
           }
-          // one more, so the last frame lasts its whole hold (redrawn: Chrome skips a request for an unchanged canvas)
-          frame(times[times.length - 1]); track.requestFrame();
-          await sleep(50);
-          rec.stop(); await done;
-          stream.getTracks().forEach(t => t.stop());
-          blob = new Blob(chunks, { type: type.split(";")[0] });
         }
-        const ext = kind === "gif" ? "gif" : type.startsWith("video/mp4") ? "mp4" : "webm";
+        const ext = kind === "gif" ? "gif" : blob.type === "video/mp4" ? "mp4" : "webm";
         const link = document.createElement("a");
         const d = new Date(realT(data, a) * 1000), stamp = `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(d.getMinutes())}`;
         link.href = URL.createObjectURL(blob);
@@ -1157,7 +1258,7 @@
           : data.prefixes || data.combined ? `bgpcanary-compare-${stamp}` : `bgpcanary-paths-${stamp}`) + "." + ext;
         document.body.appendChild(link); link.click(); link.remove();
         setTimeout(() => URL.revokeObjectURL(link.href), 60000);
-        gs.textContent = `Saved ${(blob.size / 1048576).toFixed(1)} MB ${ext.toUpperCase()}` + (ext === "webm" ? " (this browser can't record MP4)" : "");
+        gs.textContent = `Saved ${(blob.size / 1048576).toFixed(1)} MB ${ext.toUpperCase()}` + (ext === "webm" ? " (this browser can't encode MP4)" : "");
       } catch (e) {
         gs.textContent = "Export failed: " + e;
       } finally {
