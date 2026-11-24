@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please **don't open a public issue** for security problems. Report them privately through GitHub:
-**Security → Report a vulnerability** on [the repository](https://github.com/gregsowell/bgpcanary/security/advisories/new).
+**Security → Report a vulnerability** on [the repository](https://github.com/Kintoyyy/bgpcanary/security/advisories/new).
 
 Include what you found, how to reproduce it, and what an attacker could do with it. You'll get a reply within
 a few days. Fixes are released as a patch version, and the advisory is published once users have had time to
@@ -17,7 +17,7 @@ image (`docker compose pull && docker compose up -d`).
 ## How bgpcanary is built to be safe
 
 - **Unprivileged service:** the app runs as an unprivileged `bgpcanary` user under systemd sandboxing (`NoNewPrivileges`, read-only system, private /tmp), behind nginx. On Alpine it runs under OpenRC's supervise-daemon as the same user with no-new-privileges, without systemd's wider sandbox. It never needs root at run time; installing and updating are done on the server with sudo (or doas).
-- **Container image:** runs as an unprivileged user (uid 10001) with no Linux capabilities, and works on a read-only root filesystem. Images are built from the tagged source by GitHub Actions and carry a signed build provenance: `gh attestation verify oci://ghcr.io/gregsowell/bgpcanary:<version> --owner gregsowell`.
+- **Container image:** runs as an unprivileged user (uid 10001) with no Linux capabilities, and works on a read-only root filesystem. Images are built from the tagged source by GitHub Actions and carry a signed build provenance: `gh attestation verify oci://ghcr.io/kintoyyy/bgpcanary:<version> --owner Kintoyyy`.
 - **Passwords:** hashed with scrypt; login attempts are throttled; the first admin password is random and must be changed at first login.
 - **API tokens:** 256-bit random values shown once and stored only as a SHA-256 hash; revocable one by one or per account; accepted only on the API (`/api/v1/`) and the MCP server (`/mcp`) in the `Authorization` header, never in a URL or a cookie; bad tokens are rate-limited per address.
 - **MCP server:** off by default; when on, it takes only an API token (a browser's session is refused there), serves reads only, and logs each call with the account and token.

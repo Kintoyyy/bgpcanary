@@ -22,7 +22,7 @@ DATA=/var/lib/bgpcanary
 ETC=/etc/bgpcanary
 current() { sed -n 's/^__version__ = "\(.*\)"/\1/p' "$APP/bgpcanary/__init__.py" 2>/dev/null; }
 REPO=$(sed -n 's/^REPO = "\([^"]*\)".*/\1/p' "$APP/bgpcanary/__init__.py" 2>/dev/null)
-REPO=${REPO:-gregsowell/bgpcanary}
+REPO=${REPO:-Kintoyyy/bgpcanary}
 MODE=latest; WANT=""; FROM=""
 while [ $# -gt 0 ]; do
   case "$1" in

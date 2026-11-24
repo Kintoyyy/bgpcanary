@@ -4,7 +4,7 @@
 
 - Admins see a small **"update x.y.z"** badge in the web UI header when a newer release is published. **Settings › About & updates** shows what's new. bgpcanary checks GitHub once a day; you can switch that off on the same page.
 - On the server: `sudo bgpcanary-update --check`
-- On GitHub: *Watch → Custom → Releases* on [the repository](https://github.com/gregsowell/bgpcanary) to get an email for every release.
+- On GitHub: *Watch → Custom → Releases* on [the repository](https://github.com/Kintoyyy/bgpcanary) to get an email for every release.
 
 Version numbers follow `MAJOR.MINOR.PATCH`:
 
@@ -54,7 +54,7 @@ sudo bgpcanary-update --rollback
 This restores the previous version's code **and** the database from just before the update. Anything recorded
 since the update is set aside, not deleted, in `/var/backups/bgpcanary/rolled-back-from-*.db`. Only the most recent update can be rolled back this way.
 To go further back, use `--version` with the older release number. Please also
-[open an issue](https://github.com/gregsowell/bgpcanary/issues) describing what went wrong.
+[open an issue](https://github.com/Kintoyyy/bgpcanary/issues) describing what went wrong.
 
 ## Updating to 1.3.2
 
@@ -78,7 +78,7 @@ the `bgpcanary` service account could already have been compromised. To have 1.2
 update as well:
 
 ```bash
-curl -fsSL https://github.com/gregsowell/bgpcanary/archive/refs/tags/v1.2.2.tar.gz | tar -xz -C /tmp
+curl -fsSL https://github.com/Kintoyyy/bgpcanary/archive/refs/tags/v1.2.2.tar.gz | tar -xz -C /tmp
 sudo bash /tmp/bgpcanary-1.2.2/deploy/update.sh --from /tmp/bgpcanary-1.2.2
 ```
 

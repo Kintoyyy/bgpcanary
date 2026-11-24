@@ -1,6 +1,6 @@
 # Running bgpcanary in a container
 
-bgpcanary is also published as a container image, **`ghcr.io/gregsowell/bgpcanary`**, for **amd64** and
+bgpcanary is also published as a container image, **`ghcr.io/kintoyyy/bgpcanary`**, for **amd64** and
 **arm64** (for example a Raspberry Pi 4 or 5 with a 64-bit OS, or Ampere and Graviton servers). It's Alpine
 Linux with Python and bgpcanary, about 100 MB, and runs with Docker or Podman (rootful or rootless).
 
@@ -26,7 +26,7 @@ To look around on a trusted network, without HTTPS:
 
 ```bash
 docker run -d --name bgpcanary --restart unless-stopped -p 8080:8080 -e BGPCANARY_INSECURE_COOKIES=1 \
-  -v bgpcanary-data:/var/lib/bgpcanary ghcr.io/gregsowell/bgpcanary:latest
+  -v bgpcanary-data:/var/lib/bgpcanary ghcr.io/kintoyyy/bgpcanary:latest
 docker logs bgpcanary
 ```
 
@@ -44,7 +44,7 @@ reverse proxy on the same host:
 
 ```bash
 mkdir bgpcanary && cd bgpcanary
-curl -fsSLO https://raw.githubusercontent.com/gregsowell/bgpcanary/main/deploy/docker/compose.yaml
+curl -fsSLO https://raw.githubusercontent.com/Kintoyyy/bgpcanary/main/deploy/docker/compose.yaml
 docker compose up -d
 docker compose logs bgpcanary     # shows the initial admin password
 ```
@@ -72,7 +72,7 @@ your host name, then run `docker compose up -d` in their folder.
 ```yaml
 services:
   bgpcanary:
-    image: ghcr.io/gregsowell/bgpcanary:latest
+    image: ghcr.io/kintoyyy/bgpcanary:latest
     container_name: bgpcanary
     restart: unless-stopped
     volumes:
@@ -223,7 +223,7 @@ container is called.
 docker compose pull && docker compose up -d
 ```
 
-Without Compose: `docker pull ghcr.io/gregsowell/bgpcanary:latest`, then remove the container and start it again
+Without Compose: `docker pull ghcr.io/kintoyyy/bgpcanary:latest`, then remove the container and start it again
 with the same options.
 
 Before a new version first starts, it backs the database up into `backups/`, then makes any database changes it
@@ -234,7 +234,7 @@ To choose when you move to new features, use a tag like `1.3` (bug fixes only) o
 
 ## Going back to an earlier version
 
-Run the previous version's image, e.g. `image: ghcr.io/gregsowell/bgpcanary:1.3.0` in compose.yaml, then
+Run the previous version's image, e.g. `image: ghcr.io/kintoyyy/bgpcanary:1.3.0` in compose.yaml, then
 `docker compose up -d`. Database changes are only ever additive, so an older version works with a newer
 database. The exception is the upstream chains in the visibility history: since 1.3.2 they're stored only when
 they change, so 1.3.1 and earlier show the upstream chains chart and the event pages' "who carried" table mostly
@@ -315,7 +315,7 @@ The image has a health check, so `docker ps` shows `(healthy)`. For outside moni
   signed build provenance. To check that an image came from this repository:
 
   ```bash
-  gh attestation verify oci://ghcr.io/gregsowell/bgpcanary:1.3.0 --owner gregsowell
+  gh attestation verify oci://ghcr.io/kintoyyy/bgpcanary:1.3.0 --owner Kintoyyy
   ```
 
 - Each release's image includes the Alpine and Python security fixes available when it was built. Later fixes
@@ -324,7 +324,7 @@ The image has a health check, so `docker ps` shows `(healthy)`. For outside moni
 ## Building the image yourself
 
 ```bash
-git clone https://github.com/gregsowell/bgpcanary.git && cd bgpcanary
+git clone https://github.com/Kintoyyy/bgpcanary.git && cd bgpcanary
 docker build -t bgpcanary .
 deploy/docker/smoke-test.sh bgpcanary      # optional: the checks CI runs on every change
 ```

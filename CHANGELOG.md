@@ -13,6 +13,7 @@ anything, and major releases may need you to read the notes before upgrading.
 - **Events › Export CSV** saves every event that matches the filters, not just the page shown, with start and end times in UTC, duration, type, prefix, title, lowest visibility and a link to each.
 
 ### Changed
+- **This copy is a fork: it points at [Kintoyyy/bgpcanary](https://github.com/Kintoyyy/bgpcanary).** Update checks, `bgpcanary-update`, the container image (`ghcr.io/kintoyyy/bgpcanary`) and the documentation's links use the fork. *Settings › About & updates* credits the original, [gregsowell/bgpcanary](https://github.com/gregsowell/bgpcanary) by The Brothers WISP. The support link in the header is gone. The entries below this release keep their links to the original.
 - **The Events page uses more of a wide screen, and its times stay on one line.** The start, end and duration columns no longer wrap.
 - **Large networks and peerings: the path tree loads and moves much faster.**
   - Finding where each RIS peer's route stood at the start of a replay read the prefix's whole stored history. On a prefix with 1.5 million stored updates that took 20 seconds and more; it now takes about half a second.

@@ -7,7 +7,7 @@
 # See docs/DOCKER.md.  Update:  docker compose pull && docker compose up -d
 services:
   bgpcanary:
-    image: ${BGPCANARY_IMAGE:-ghcr.io/gregsowell/bgpcanary:latest}
+    image: ${BGPCANARY_IMAGE:-ghcr.io/kintoyyy/bgpcanary:latest}
     container_name: bgpcanary
     restart: unless-stopped
     volumes:

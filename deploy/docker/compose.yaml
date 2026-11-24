@@ -8,7 +8,7 @@
 # Update:  docker compose pull && docker compose up -d
 services:
   bgpcanary:
-    image: ${BGPCANARY_IMAGE:-ghcr.io/gregsowell/bgpcanary:latest}   # or a fixed version, e.g. ghcr.io/gregsowell/bgpcanary:1.3.0
+    image: ${BGPCANARY_IMAGE:-ghcr.io/kintoyyy/bgpcanary:latest}   # or a fixed version, e.g. ghcr.io/kintoyyy/bgpcanary:1.3.0
     container_name: bgpcanary
     restart: unless-stopped
     ports:
