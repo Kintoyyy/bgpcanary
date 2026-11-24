@@ -6,6 +6,12 @@ anything, and major releases may need you to read the notes before upgrading.
 
 ## [Unreleased]
 
+## [1.8.2] - 2026-11-25
+
+### Changed
+- **The timeline follows the playback & export range.** When *From* and *To* pick a stretch of the window, the strip under the tree and the slider show just that stretch, so you can move through it finely. *Whole window* zooms back out, and so does jumping to a moment outside it.
+- **Drag across the strip under the tree to pick a range.** That stretch becomes *From* and *To* in one go, and the timeline zooms in to it. Drag again to zoom further. A plain click still jumps to that moment.
+
 ## [1.8.1] - 2026-11-25
 
 ### Fixed

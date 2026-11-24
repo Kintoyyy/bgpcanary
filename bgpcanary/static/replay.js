@@ -650,9 +650,12 @@
         this.hit.push({ x, y, r: Math.max(r, 6), k, n, c, b });
       }
       // timeline strip with event shading and visibility
-      const ty = H - 70, th2 = 44, tx0 = 16, tx1 = W - 16, span = this.D.end - this.D.start;
-      const X = t => tx0 + (t - this.D.start) / span * (tx1 - tx0);
+      // (this.view: the From/To range the strip is zoomed to; null: the whole window)
+      const [V0, V1] = this.view || [this.D.start, this.D.end];
+      const ty = H - 70, th2 = 44, tx0 = 16, tx1 = W - 16, span = V1 - V0;
+      const X = t => tx0 + (t - V0) / span * (tx1 - tx0);
       ctx.fillStyle = th.codebg; ctx.fillRect(tx0, ty, tx1 - tx0, th2);
+      ctx.save(); ctx.beginPath(); ctx.rect(tx0, 0, tx1 - tx0, H); ctx.clip();   // (what's outside the view)
       // The events open in the window: one shade per stretch of time and severity, however many overlap there
       // (critical over warning over info: blue, as a brief dip on the charts), and a mark on top of one too short to
       // see as a band (seconds, on a strip of hours).
@@ -660,8 +663,8 @@
       for (const sev of ["info", "warning", "critical"]) {
         const merged = [];
         for (const e of this.events.filter(e => (SHADE[e.severity] ? e.severity : "warning") === sev).sort((a, b) => a.start - b.start)) {
-          const s = Math.max(e.start, this.D.start), en = Math.min(e.end || this.D.end, this.D.end);
-          if (en < this.D.start || s > this.D.end) continue;
+          const s = Math.max(e.start, V0), en = Math.min(e.end || this.D.end, V1);
+          if (en < V0 || s > V1) continue;
           const last = merged[merged.length - 1];
           if (last && s <= last[1]) last[1] = Math.max(last[1], en); else merged.push([s, en]);
         }
@@ -681,10 +684,10 @@
       const rows = [-1e9, -1e9, -1e9];
       const pins = this.ev ? [{ t: this.ev.start, end: null, kind: "event", level: this.ev.severity }, ...this.marks] : this.marks;
       for (const m of pins.slice().sort((a, b) => a.t - b.t)) {
-        if (m.t > this.D.end || (markSpan(m) ? m.end : m.t) < this.D.start) continue;
-        const col = markColor(m, th), x = X(Math.max(m.t, this.D.start));
+        if (m.t > V1 || (markSpan(m) ? m.end : m.t) < V0) continue;
+        const col = markColor(m, th), x = X(Math.max(m.t, V0));
         if (markSpan(m) && m.kind !== "event") {   // (an event's stretch is shaded above already)
-          const w = X(Math.min(m.end, this.D.end)) - x;
+          const w = X(Math.min(m.end, V1)) - x;
           if (w >= 3) { ctx.globalAlpha = .14; ctx.fillStyle = col; ctx.fillRect(x, ty, w, th2); ctx.globalAlpha = 1; }
         }
         let row = rows.findIndex(v => x - v >= 13);
@@ -697,10 +700,10 @@
         ctx.beginPath(); ctx.moveTo(x - 6, py); ctx.lineTo(x + 6, py); ctx.lineTo(x, py + 10); ctx.closePath(); ctx.fill();
         ctx.strokeStyle = th.bg; ctx.lineWidth = 1; ctx.stroke();   // (a hairline, so pins that touch stay apart)
       }
-      if (this.gifRange && !opts.footer) {
-        // selected GIF / playback range
-        const [a, b] = this.gifRange;
-        const xa = X(Math.max(a, this.D.start)), xb = X(Math.min(b, this.D.end));
+      if (this.drag && !opts.footer) {
+        // a range being dragged across the strip
+        const [a, b] = this.drag;
+        const xa = X(Math.max(a, V0)), xb = X(Math.min(b, V1));
         ctx.fillStyle = "rgba(36,99,235,.16)"; ctx.fillRect(xa, ty, Math.max(2, xb - xa), th2);
         ctx.strokeStyle = th.accent; ctx.lineWidth = 2;
         for (const x of [xa, xb]) { ctx.beginPath(); ctx.moveTo(x, ty - 6); ctx.lineTo(x, ty + th2 + 6); ctx.stroke(); }
@@ -722,6 +725,7 @@
       }
       let lastLabel = -Infinity;   // (a cut's label only where it fits: many short cuts would pile up)
       for (const c of (this.D.stitch || {}).cuts || []) {   // events replayed together: where quiet time was cut out
+        if (c.at < V0 || c.at > V1) continue;
         const x = X(c.at), s = `✂ ${durText(c.skipped)}`;
         ctx.fillStyle = th.bg; ctx.fillRect(x - 2, ty, 4, th2);
         ctx.strokeStyle = th.muted; ctx.lineWidth = 1; ctx.setLineDash([2, 2]);
@@ -735,10 +739,11 @@
       }
       ctx.strokeStyle = th.text; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.moveTo(X(this.t), ty - 4); ctx.lineTo(X(this.t), ty + th2 + 4); ctx.stroke();
+      ctx.restore();
       ctx.fillStyle = th.muted; ctx.font = "11px system-ui, sans-serif";
-      const rs = this.real(this.D.end) - this.real(this.D.start);
-      ctx.fillText(fmtAxis(this.real(this.D.start), rs), tx0, ty + th2 + 14);
-      const et = fmtAxis(this.real(this.D.end), rs); ctx.fillText(et, tx1 - ctx.measureText(et).width, ty + th2 + 14);
+      const rs = this.real(V1) - this.real(V0);
+      ctx.fillText(fmtAxis(this.real(V0), rs), tx0, ty + th2 + 14);
+      const et = fmtAxis(this.real(V1), rs); ctx.fillText(et, tx1 - ctx.measureText(et).width, ty + th2 + 14);
       if (opts.footer) { const w = ctx.measureText(opts.footer).width; ctx.fillText(opts.footer, (W - w) / 2, ty + th2 + 14); }
       this.timeline = { ty, th2, tx0, tx1 };
       ctx.restore();
@@ -866,8 +871,9 @@
     const syncRange = () => {
       if (!rp) return;
       const [a, b] = range(), whole = a <= data.start + 1 && b >= data.end - 1;
-      rp.gifRange = whole ? null : [a, b];
-      q("gif-span").textContent = b > a ? `${dur(b - a)} selected${data.stitch ? ", quiet time cut out" : ""}${whole ? " (whole window)" : ""}`
+      rp.view = whole || !(b > a) ? null : [a, b];   // the strip and the slider zoom to the range
+      if (rp.view && (rp.t < a || rp.t > b)) rp.seek(a);
+      q("gif-span").textContent = b > a ? `${dur(b - a)} selected${data.stitch ? ", quiet time cut out" : ""}${whole ? " (whole window)" : ": the timeline shows just this"}`
                                         : "From must be before To";
       pace();
       render();
@@ -944,6 +950,8 @@
       rp.captions = !!(capBox && capBox.checked);
       const W = wrap.clientWidth;
       if (!W) return;
+      const [v0, v1] = vw();
+      slider.value = Math.round(1000 * (rp.t - v0) / (v1 - v0));
       const mode = sizeSel ? sizeSel.value : "full";
       const avail = window.innerHeight - 140;
       rp.rowH = 20;
@@ -969,7 +977,7 @@
       // pixels of it (not the page's own event: the readout above says "during event")
       const note = q("note");
       if (note) {
-        const here = rp.at(rp.t, Math.max(10, (data.end - data.start) / 250)).filter(a => !a.own);
+        const here = rp.at(rp.t, Math.max(10, (v1 - v0) / 250)).filter(a => !a.own);
         note.hidden = !(here.length || rp.marks.length || rp.events.length);
         note.classList.toggle("rp-note-pins", rp.marks.length > 0);
         note.replaceChildren(...here.slice(0, 4).map(a => {
@@ -988,8 +996,8 @@
         }
       }
       const dt = ts => { const d = new Date(rp.real(ts) * 1000); return `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
-      if (q("slider-start")) q("slider-start").textContent = dt(data.start);
-      if (q("slider-end")) q("slider-end").textContent = dt(data.end) + (opts.followNow ? " (now)" : "");
+      if (q("slider-start")) q("slider-start").textContent = dt(v0);
+      if (q("slider-end")) q("slider-end").textContent = dt(v1) + (opts.followNow && v1 >= data.end - 1 ? " (now)" : "");
     };
     let loaded = "";   // the status line after a load
     const rebuild = () => {
@@ -998,10 +1006,11 @@
       status.textContent = loaded + (rp.trimmed ? " · a large tree: smaller branches are folded into \u201c+N more\u201d (point at one to see them)" : "");
       render();
     };
+    const vw = () => rp.view || [data.start, data.end];
     const setT = t => {
       t = Math.min(data.end, Math.max(data.start, t));
+      if (rp.view && (t < rp.view[0] || t > rp.view[1])) { setRangeInputs(data.start, data.end); rangeCustom = false; syncRange(); }   // (out of the range: zoom back out)
       rp.seek(t);
-      slider.value = Math.round(1000 * (t - data.start) / (data.end - data.start));
       following = !!opts.followNow && data.end - t < 1;
       render();
     };
@@ -1035,8 +1044,9 @@
     let frameAsked = 0;
     slider.addEventListener("input", () => {
       if (!rp) return; stop();
-      rp.seek(data.start + (data.end - data.start) * slider.value / 1000);
-      following = !!opts.followNow && slider.value >= 1000;
+      const [v0, v1] = vw();
+      rp.seek(v0 + (v1 - v0) * slider.value / 1000);
+      following = !!opts.followNow && slider.value >= 1000 && v1 >= data.end - 1;
       if (!frameAsked) frameAsked = requestAnimationFrame(() => { frameAsked = 0; render(); });
     });
     q("depth").onchange = rebuild; q("top").onchange = rebuild;
@@ -1045,13 +1055,38 @@
     // a node that has a branch, or its label: open or close that branch
     const branchAt = (x, y) => (rp.hit || []).find(h => (h.n.closed || (h.n.children.length && h.n.level > 0))
       && x >= h.x - h.r - 2 && x <= h.x + h.r + 170 && Math.abs(y - h.y) <= Math.max(h.r, 9));
+    // Drag across the strip under the tree: that stretch becomes the From/To range (and the strip zooms to it)
+    const onStrip = (x, y) => { const tl = rp && rp.timeline; return tl && y >= tl.ty && y <= tl.ty + tl.th2 && x >= tl.tx0 && x <= tl.tx1; };
+    const timeAt = x => { const tl = rp.timeline, [v0, v1] = vw(); return v0 + (Math.min(Math.max(x, tl.tx0), tl.tx1) - tl.tx0) / (tl.tx1 - tl.tx0) * (v1 - v0); };
+    let dragFrom = null, dragged = false;
+    canvas.addEventListener("mousedown", e => {
+      const b = canvas.getBoundingClientRect(), x = (e.clientX - b.left) / k, y = (e.clientY - b.top) / k;
+      if (e.button === 0 && onStrip(x, y)) { dragFrom = { x, t: timeAt(x) }; e.preventDefault(); }
+    });
+    window.addEventListener("mousemove", e => {
+      if (!dragFrom) return;
+      const x = (e.clientX - canvas.getBoundingClientRect().left) / k;
+      if (Math.abs(x - dragFrom.x) < 5 && !rp.drag) return;
+      const t = timeAt(x);
+      rp.drag = [Math.min(t, dragFrom.t), Math.max(t, dragFrom.t)];
+      if (!frameAsked) frameAsked = requestAnimationFrame(() => { frameAsked = 0; render(); });
+    });
+    window.addEventListener("mouseup", () => {
+      if (!dragFrom) return;
+      dragFrom = null;
+      if (!rp.drag) return;
+      const [a, b] = rp.drag;
+      rp.drag = null; dragged = true;   // (not a click on the strip as well)
+      setRangeInputs(a, b); rangeCustom = true; stop(); syncRange();
+    });
     canvas.addEventListener("click", e => {
       if (!rp) return;
+      if (dragged) { dragged = false; return; }
       const b = canvas.getBoundingClientRect(), x = (e.clientX - b.left) / k, y = (e.clientY - b.top) / k, tl = rp.timeline;
       const br = branchAt(x, y);
       if (br) { toggled.has(br.k) ? toggled.delete(br.k) : toggled.add(br.k); rp.reshape(); render(); return; }
       if (tl && y >= tl.ty - (rp.marks.length ? 28 : 8) && y <= tl.ty + tl.th2 + 6) {   // (pins stand above the strip)
-        const per = (data.end - data.start) / (tl.tx1 - tl.tx0), t = data.start + (x - tl.tx0) * per;
+        const [v0, v1] = vw(), per = (v1 - v0) / (tl.tx1 - tl.tx0), t = v0 + (x - tl.tx0) * per;
         // a click on a pin or on an event's mark, or a few pixels off it, goes to that moment exactly
         const pin = [...rp.marks, ...rp.events.map(e => ({ t: e.start }))].filter(m => Math.abs(m.t - t) <= 5 * per)
           .sort((p, r) => Math.abs(p.t - t) - Math.abs(r.t - t))[0];
@@ -1062,7 +1097,7 @@
       if (!rp) return;
       const b = canvas.getBoundingClientRect(), x = (e.clientX - b.left) / k, y = (e.clientY - b.top) / k;
       const h = (rp.hit || []).find(h => (h.x - x) ** 2 + (h.y - y) ** 2 <= (h.r + 3 / k) ** 2);
-      canvas.style.cursor = branchAt(x, y) ? "pointer" : "default";
+      canvas.style.cursor = branchAt(x, y) ? "pointer" : onStrip(x, y) ? "col-resize" : "default";
       // the tooltip stays inside the tree's panel (which clips it): to the left of the cursor near the right edge,
       // above it near the bottom
       const showTip = text => {
@@ -1075,7 +1110,7 @@
       if (!h && tl && y >= tl.ty - (rp.marks.length ? 28 : 10) && y <= tl.ty + tl.th2 + 4 && x >= tl.tx0 - 6 && x <= tl.tx1 + 6) {
         // over the strip or a pin on it: what is there (a pin or a short event is a few pixels wide, so 5 px either
         // side count)
-        const per = (data.end - data.start) / (tl.tx1 - tl.tx0), t = data.start + (x - tl.tx0) * per;
+        const [v0, v1] = vw(), per = (v1 - v0) / (tl.tx1 - tl.tx0), t = v0 + (x - tl.tx0) * per;
         const at = rp.at(t, 5 * per);
         if (at.length) {
           showTip(at.slice(0, 6).map(a => `${rp.when(a.t)}  ${a.label}: ${a.text}`).join("\n") + (at.length > 6 ? `\n+${at.length - 6} more` : ""));
