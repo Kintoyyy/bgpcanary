@@ -30,6 +30,7 @@ header nav a.nav-support { font-weight: 700; color: var(--text); }
 header .me { color: var(--muted); white-space: nowrap; font-size: 13px; }
 .wrap { max-width: 1320px; margin: 0 auto; padding: 0 16px; }
 main.wrap { padding-top: 20px; padding-bottom: 40px; }
+main.wrap.wide { max-width: 1840px; }   /* long tables (Events): room for full timestamps and titles */
 /* "Support The Brothers WISP on Patreon": one quiet line under the header, dismissible */
 .support-strip { display: flex; justify-content: flex-end; align-items: center; gap: 8px; padding-top: 10px; padding-bottom: 0;
                  font-size: 12px; color: var(--muted); }
@@ -204,4 +205,5 @@ details.burst .n { font-weight: 650; font-size: 15px; min-width: 90px; }
 .evt { font-size: 12px; }
 @media (max-width: 760px) { .chain-hdr { display: none; } details.chain > summary { grid-template-columns: 1fr; gap: 4px; } }
 /* Events list: a line between days */
+#events td.when { white-space: nowrap; }
 #events tr.day td { background: var(--code-bg); color: var(--muted); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; padding: 4px 8px; }

@@ -53,13 +53,15 @@
   // one color per prefix when several share one tree (up to 12 strands; more are combined into one)
   const PCOL = ["#2463eb", "#e8710a", "#12a36b", "#9b4dca", "#d23f8a", "#0f9bb5",
                 "#b8860b", "#5c6bc0", "#6d4c41", "#00796b", "#7cb342", "#455a64"];
-  const PRIVATE = "Private peering";   // the group for listed peers that aren't at one of your exchanges (peering.py)
+  const PRIVATE = "Private peering";
+  const CAPTION_H = 34;   // the "Event captions" band, gap included   // the group for listed peers that aren't at one of your exchanges (peering.py)
 
   function theme() {
     return {
       bg: css("--panel") || "#fff", text: css("--text") || "#111", muted: css("--muted") || "#666",
       border: css("--border") || "#ddd", accent: css("--accent") || "#2463eb", crit: css("--crit") || "#c8262b",
       ok: css("--ok") || "#1a8a4a", warn: css("--warn") || "#c77700", codebg: css("--code-bg") || "#f0f2f5",
+      critbg: css("--crit-bg") || "#fde8e8", warnbg: css("--warn-bg") || "#fff3dd",
     };
   }
 
@@ -175,11 +177,11 @@
       }
       for (const [n, c] of this.countsFor(this.baseState, this.chains)) if (c > (maxC.get(n) || 0)) maxC.set(n, c);
       this.seek(this.D.start); this.seek(keep);
-      const kids = new Map(), all = new Set();
-      const addEdge = (p, c) => { all.add(p); all.add(c); if (!kids.has(p)) kids.set(p, new Set()); kids.get(p).add(c); };
+      this.maxC = maxC;
+      const baseKids = new Map(), all = new Set();
       for (const c of this.chains) for (let l = 0; l < c.length; l++) {
         all.add(c[l]);
-        if (l > 0) addEdge(c[l - 1], c[l]);
+        if (l > 0) { if (!baseKids.has(c[l - 1])) baseKids.set(c[l - 1], new Set()); baseKids.get(c[l - 1]).add(c[l]); }
       }
       // What each network does with your routes over the whole window: the ones right in front of your AS (and
       // your configured upstreams and peers) reach you directly; the rest of those in any path reach you some other
@@ -194,84 +196,102 @@
         direct.add(p[p.length - 2]);
         for (let i = 0; i < p.length - 1; i++) anywhere.add(p[i]);
       }
-      // Always show every direct upstream, and every neighbour (transit/peer) of each upstream from the
-      // global table - including the ones that carry none of our paths, so gaps are visible.
-      const pinned = new Map(), folds = new Map();
       const rootKey = String(this.D.asn);
-      if (depth >= 1) {
-        for (const u of this.D.upstreams || []) {
-          const uk = `${rootKey}>${u}`;
-          addEdge(rootKey, uk);
-          pinned.set(uk, { upstream: true });
-          if (depth < 2 || nbrs === "none") continue;
-          for (const n of (this.D.upstream_neighbors || {})[u] || []) {
-            const nk = `${uk}>${n.asn}`;
-            const kind = maxC.get(nk) ? null : direct.has(n.asn) ? "direct" : anywhere.has(n.asn) ? "elsewhere" : "never";
-            if (nbrs === "fold" && (kind === "direct" || kind === "elsewhere")) {
-              if (!folds.has(uk)) folds.set(uk, []);
-              folds.get(uk).push({ asn: n.asn, kind, power: n.power });
-              continue;
-            }
-            addEdge(uk, nk);
-            pinned.set(nk, { power: n.power, of: u, kind });
-          }
-          // neighbours it had in the last month and no longer has at all: "no longer peered"
-          for (const n of (this.D.upstream_gone || {})[u] || []) {
-            const nk = `${uk}>${n.asn}`;
-            if (pinned.has(nk)) continue;
-            addEdge(uk, nk);
-            pinned.set(nk, { of: u, gone: n });
-          }
-        }
-      }
-      this.pinned = pinned;
-      this.maxC = maxC;
-      const pw = k => (pinned.get(k) || {}).power || 0;
-      // collapse: keep topN children (pinned ones always), fold the rest into "others"
-      const disp = new Map(), shown = new Map();
-      const roots = [...all].filter(k => !k.includes(">"));
+      if (depth >= 1 && (this.D.upstreams || []).length) all.add(rootKey);
+      const roots = [...all].filter(k => !k.includes(">")).sort((a, b) => (maxC.get(b) || 0) - (maxC.get(a) || 0));
       const isX = k => /(^|>)x(:\d+)?$/.test(k);   // the "Exchanges" node, or one exchange: always shown
-      const visit = (k, level, parent) => {
-        const last = k.split(">").pop();
-        const xg = last === "x" ? "all" : last.startsWith("x:") ? this.xnames[Number(last.slice(2))] : null;
-        shown.set(k, { key: k, level, asn: Number(last), xg, parent, children: [], max: maxC.get(k) || 0 });
-        disp.set(k, k);
-        if (parent) shown.get(parent).children.push(k);
-        const ch = [...(kids.get(k) || [])].sort((a, b) => ((maxC.get(b) || 0) - (maxC.get(a) || 0)) || (pw(b) - pw(a)));
-        const top = [], rest = [];
-        let free = 0;
-        const cap = last.startsWith("x:") ? Math.max(topN, 40) : topN;   // an exchange's peers stay unfolded
-        for (const c of ch) {
-          if (pinned.has(c) || isX(c)) top.push(c);
-          else if (free++ < cap) top.push(c);
-          else rest.push(c);
+      // A large network's tree (thousands of RIS peers, dozens of exchanges) ran to thousands of rows: slow to draw
+      // and past what a canvas can hold. Over ROWS, the neighbours that reach you another way fold into one line
+      // first, then the smaller branches fold into "+N more", deepest level first. A problem (red) branch never folds.
+      const ROWS = 500, caps = new Array(depth + 1).fill(topN);
+      let mode = nbrs;
+      const shape = () => {
+        // (the pinned branches below go on copies of the sets they change: baseKids serves every pass)
+        const kids = new Map(baseKids), own = new Set();
+        const addEdge = (p, c) => { if (!own.has(p)) { kids.set(p, new Set(kids.get(p) || [])); own.add(p); } kids.get(p).add(c); };
+        // Always show every direct upstream, and every neighbour (transit/peer) of each upstream from the
+        // global table - including the ones that carry none of our paths, so gaps are visible.
+        const pinned = new Map(), folds = new Map();
+        if (depth >= 1) {
+          for (const u of this.D.upstreams || []) {
+            const uk = `${rootKey}>${u}`;
+            addEdge(rootKey, uk);
+            pinned.set(uk, { upstream: true });
+            if (depth < 2 || mode === "none") continue;
+            for (const n of (this.D.upstream_neighbors || {})[u] || []) {
+              const nk = `${uk}>${n.asn}`;
+              const kind = maxC.get(nk) ? null : direct.has(n.asn) ? "direct" : anywhere.has(n.asn) ? "elsewhere" : "never";
+              if (mode === "fold" && (kind === "direct" || kind === "elsewhere")) {
+                if (!folds.has(uk)) folds.set(uk, []);
+                folds.get(uk).push({ asn: n.asn, kind, power: n.power });
+                continue;
+              }
+              addEdge(uk, nk);
+              pinned.set(nk, { power: n.power, of: u, kind });
+            }
+            // neighbours it had in the last month and no longer has at all: "no longer peered"
+            for (const n of (this.D.upstream_gone || {})[u] || []) {
+              const nk = `${uk}>${n.asn}`;
+              if (pinned.has(nk)) continue;
+              addEdge(uk, nk);
+              pinned.set(nk, { of: u, gone: n });
+            }
+          }
         }
-        for (const c of top) visit(c, level + 1, k);
-        if (rest.length) {
-          const ok = k + ">*";
-          shown.set(ok, { key: ok, level: level + 1, asn: null, parent: k, children: [], others: rest.length,
-                          max: rest.reduce((s, c) => s + (maxC.get(c) || 0), 0) });
-          shown.get(k).children.push(ok);
-          const mark = n => { disp.set(n, ok); for (const c of kids.get(n) || []) mark(c); };
-          rest.forEach(mark);
-        }
-        const fo = folds.get(k);   // an upstream's neighbours that reach you another way, as one line
-        if (fo && fo.length) {
-          const fk = k + ">~";
-          shown.set(fk, { key: fk, level: level + 1, asn: null, parent: k, children: [], folded: fo, max: 0 });
-          shown.get(k).children.push(fk);
-        }
+        this.pinned = pinned;
+        const pw = k => (pinned.get(k) || {}).power || 0;
+        // collapse: keep topN children (pinned ones always), fold the rest into "others"
+        const disp = new Map(), shown = new Map();
+        const visit = (k, level, parent) => {
+          const last = k.split(">").pop();
+          const xg = last === "x" ? "all" : last.startsWith("x:") ? this.xnames[Number(last.slice(2))] : null;
+          shown.set(k, { key: k, level, asn: Number(last), xg, parent, children: [], max: maxC.get(k) || 0 });
+          disp.set(k, k);
+          if (parent) shown.get(parent).children.push(k);
+          const ch = [...(kids.get(k) || [])].sort((a, b) => ((maxC.get(b) || 0) - (maxC.get(a) || 0)) || (pw(b) - pw(a)));
+          const top = [], rest = [];
+          let free = 0;
+          // an exchange's peers stay unfolded, until the tree is too big
+          const cap = last.startsWith("x:") && caps[level] === topN ? Math.max(topN, 40) : caps[level];
+          for (const c of ch) {
+            if (pinned.has(c) || isX(c)) top.push(c);
+            else if (free++ < cap) top.push(c);
+            else rest.push(c);
+          }
+          for (const c of top) visit(c, level + 1, k);
+          if (rest.length) {
+            const ok = k + ">*";
+            shown.set(ok, { key: ok, level: level + 1, asn: null, parent: k, children: [], others: rest.length,
+                            max: rest.reduce((s, c) => s + (maxC.get(c) || 0), 0) });
+            shown.get(k).children.push(ok);
+            const mark = n => { disp.set(n, ok); for (const c of kids.get(n) || []) mark(c); };
+            rest.forEach(mark);
+          }
+          const fo = folds.get(k);   // an upstream's neighbours that reach you another way, as one line
+          if (fo && fo.length) {
+            const fk = k + ">~";
+            shown.set(fk, { key: fk, level: level + 1, asn: null, parent: k, children: [], folded: fo, max: 0 });
+            shown.get(k).children.push(fk);
+          }
+        };
+        roots.forEach(r => visit(r, 0, null));
+        this.shown = shown;
+        this.roots = roots;
+        this.layout();
+        return disp;
       };
-      roots.sort((a, b) => (maxC.get(b) || 0) - (maxC.get(a) || 0)).forEach(r => visit(r, 0, null));
-      this.shown = shown;
-      this.roots = roots;
+      let disp = shape();
+      this.trimmed = false;
+      if (this.rows > ROWS && mode === "all") { mode = "fold"; this.trimmed = true; disp = shape(); }
+      for (let L = depth - 1; this.rows > ROWS && L >= 1;) {
+        if (caps[L] > 1) { caps[L] = Math.ceil(caps[L] / 2); this.trimmed = true; disp = shape(); } else L--;
+      }
       this.dchains = this.chains.map(c => {
         const out = [];
         for (const k of c) { const d = disp.get(k); if (!out.length || out[out.length - 1] !== d) out.push(d); if (d.endsWith("*")) break; }
         return out;
       });
       this.base = this.countsFor(this.baseState, this.dchains);
-      this.layout();
     }
     _reachNow() {
       // per network in a current path toward you: {c: RIS peers whose path has it, via: its most common next hop
@@ -331,8 +351,8 @@
     // ---- drawing ---------------------------------------------------------------------
     size(W) {
       const rowH = this.rowH || 20;   // "Fit to screen" packs rows tighter
-      const extra = (this.chips(W).lines - 1) * 20;
-      return { W, H: 86 + extra + Math.max(this.rows, 3) * rowH + 24 + 70, rowH, extra };
+      const ce = (this.chips(W).lines - 1) * 20, extra = ce + (this.captions ? CAPTION_H : 0);
+      return { W, H: 86 + extra + Math.max(this.rows, 3) * rowH + 24 + 70, rowH, extra, ce };
     }
     // header chips (one per prefix), wrapped onto more lines when they don't fit across
     chips(W) {
@@ -375,12 +395,51 @@
       }
       return ago(Date.now() / 1000 - this.t);
     }
+    // the warning and critical events open at moment t (and the page's own event, whatever its severity), worst first
+    major(t) {
+      const rank = { critical: 0, warning: 1 };
+      return this.events.filter(e => (e.severity in rank || (this.ev && e.id === this.ev.id))
+                                      && t >= e.start && t <= (e.end || this.D.end))
+        .sort((a, b) => (rank[a.severity] ?? 2) - (rank[b.severity] ?? 2) || a.start - b.start);
+    }
+    // "Event captions": a band under the header naming what's open at the selected moment, so a recording speaks for
+    // itself to someone who doesn't know the strip's colours
+    drawCaption(ctx, W, y, th) {
+      const open = this.major(this.t), h = CAPTION_H - 6, worst = open[0] && open[0].severity;
+      ctx.fillStyle = worst === "critical" ? th.critbg : worst === "warning" ? th.warnbg : th.codebg;
+      ctx.fillRect(16, y, W - 32, h);
+      const cy = y + h / 2;
+      let x = 26;
+      if (!open.length) {
+        ctx.fillStyle = th.ok; ctx.font = "600 13px system-ui, sans-serif"; ctx.fillText("●", x, cy);
+        ctx.fillStyle = th.muted; ctx.font = "13px system-ui, sans-serif";
+        ctx.fillText(this.ev && this.t > (this.ev.end || Infinity) ? "Recovered: no warning or critical event open" : "No warning or critical event open at this moment", x + 16, cy);
+        return;
+      }
+      open.forEach((e, i) => {
+        if (x < 0) return;
+        const col = e.severity === "critical" ? th.crit : e.severity === "warning" ? th.warn : th.accent;
+        const tag = `${e.severity.toUpperCase()}`, since = ` · for ${durText(this.real(this.t) - this.real(e.start))}`;
+        let title = e.title;
+        ctx.font = "700 12px system-ui, sans-serif"; const wt = ctx.measureText(tag).width;
+        ctx.font = "13px system-ui, sans-serif"; const ws = ctx.measureText(since).width;
+        const rest = open.length - i - 1, more = rest ? `  +${rest} more` : "", wm = ctx.measureText(more).width;
+        const room = W - 26 - x - wt - 10 - ws - wm;
+        if (i && room < 140) {   // no room for another: say how many more
+          ctx.fillStyle = th.muted; ctx.fillText(`+${open.length - i} more`, x, cy); x = -1; return;
+        }
+        while (title.length > 8 && ctx.measureText(title).width > room) title = title.replace(/…$/, "").slice(0, -1) + "…";
+        ctx.fillStyle = col; ctx.font = "700 12px system-ui, sans-serif"; ctx.fillText(tag, x, cy); x += wt + 10;
+        ctx.fillStyle = th.text; ctx.font = "13px system-ui, sans-serif"; ctx.fillText(title, x, cy); x += ctx.measureText(title).width;
+        ctx.fillStyle = th.muted; ctx.fillText(since, x, cy); x += ws + 24;
+      });
+    }
     real(t) { return realT(this.D, t); }
     // the time to show for a moment of the replay (events replayed together: a cut says how much it skipped)
     when(t) { const c = inCut(this.D, t); return c ? `✂ ${durText(c.skipped)} skipped` : fmt(this.real(t)); }
     draw(ctx, W, opts = {}) {
       const th = theme();
-      const { H, rowH, extra } = this.size(W);
+      const { H, rowH, extra, ce } = this.size(W);
       const counts = this.countsFor(this.cur, this.dchains);
       const total = Math.max(this.total0, 1);
       const vis = this.visible();
@@ -416,6 +475,7 @@
         const cmp = this.baseMode === "start" ? `colors vs ${fmtAxis(this.real(this.baseT), this.real(this.D.end) - this.real(this.D.start))}` : "colors vs healthiest point";
         ctx.fillText(`${this.phase()} · ${cmp}`, 230 + ctx.measureText(vt).width + 40, 42);
       }
+      if (this.captions) this.drawCaption(ctx, W, 54 + ce, th);
       // legend
       const lg = this.pp   // [label, colour, dash, width]: the same patterns the branches use
         ? [["one strand per prefix", th.accent, [], 3], ["prefix missing on this branch", th.warn, [4, 3], 3], ["not carrying you", th.crit, [1, 3], 2], ["reaches you another way", th.accent, [1, 3], 2], ["no longer peered", th.muted, [6, 3, 1, 3], 2], ["idle", th.border, [], 3]]
@@ -717,6 +777,7 @@
       rp.gifRange = whole ? null : [a, b];
       q("gif-span").textContent = b > a ? `${dur(b - a)} selected${data.stitch ? ", quiet time cut out" : ""}${whole ? " (whole window)" : ""}`
                                         : "From must be before To";
+      pace();
       render();
     };
     const setRangeInputs = (a, b) => { q("gif-from").value = toInput(a); q("gif-to").value = toInput(b); };
@@ -735,9 +796,30 @@
       nbrsSel.onchange = () => { try { localStorage.setItem("bgpcanary.treeNbrs", nbrsSel.value); } catch (e) { } rebuild(); };
     }
     const nbrsMode = () => (nbrsSel ? nbrsSel.value : "all");
+    // Length (seconds from start to end, for ▶ Play and exports), Frames, and Event captions: remembered like Size
+    const remember = (el, key, get, set) => {
+      if (!el) return;
+      try { const v = localStorage.getItem(key); if (v !== null) set(v); } catch (e) { }
+      el.addEventListener("change", () => { try { localStorage.setItem(key, get()); } catch (e) { } });
+    };
+    const lenSel = q("length"), frSel = q("frames"), capBox = q("captions");
+    const pick = sel => v => { if ([...sel.options].some(o => o.value === v)) sel.value = v; };
+    remember(lenSel, "bgpcanary.treeLength", () => lenSel.value, lenSel && pick(lenSel));
+    remember(frSel, "bgpcanary.treeFrames", () => frSel.value, frSel && pick(frSel));
+    remember(capBox, "bgpcanary.treeCaptions", () => (capBox.checked ? "1" : "0"), v => { capBox.checked = v === "1"; });
+    const lengthMs = () => 1000 * parseInt(lenSel ? lenSel.value : "20");
+    const pace = () => {
+      if (!q("pace") || !data) return;
+      const [a, b] = range(), n = parseInt(frSel.value);
+      q("pace").textContent = `${Math.round(lengthMs() / (n - 1))} ms a frame, each about ${dur((b - a) / (n - 1))} of the window`;
+    };
+    if (lenSel) lenSel.addEventListener("change", pace);
+    if (frSel) frSel.addEventListener("change", pace);
+    if (capBox) capBox.addEventListener("change", () => render());
     let k = 1;
     const render = () => {
       if (!rp) return;
+      rp.captions = !!(capBox && capBox.checked);
       const W = wrap.clientWidth;
       if (!W) return;
       const mode = sizeSel ? sizeSel.value : "full";
@@ -753,7 +835,8 @@
       const LW = W / k, { H } = rp.size(LW);
       // browsers draw nothing on a canvas over ~32k px a side or ~16M px in all (Safari): use a lower resolution instead
       const dpr = Math.min(window.devicePixelRatio || 1, 32000 / H, 32000 / LW, Math.sqrt(16e6 / (LW * H)));
-      canvas.width = Math.round(LW * dpr); canvas.height = Math.round(H * dpr);
+      const cw = Math.round(LW * dpr), chh = Math.round(H * dpr);
+      if (canvas.width !== cw || canvas.height !== chh) { canvas.width = cw; canvas.height = chh; }
       canvas.style.width = W + "px"; canvas.style.height = Math.round(H * k) + "px";
       const ctx = canvas.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       rp.draw(ctx, LW);
@@ -786,7 +869,13 @@
       if (q("slider-start")) q("slider-start").textContent = dt(data.start);
       if (q("slider-end")) q("slider-end").textContent = dt(data.end) + (opts.followNow ? " (now)" : "");
     };
-    const rebuild = () => { if (rp) { rp.build(parseInt(q("depth").value), parseInt(q("top").value), nbrsMode()); render(); } };
+    let loaded = "";   // the status line after a load
+    const rebuild = () => {
+      if (!rp) return;
+      rp.build(parseInt(q("depth").value), parseInt(q("top").value), nbrsMode());
+      status.textContent = loaded + (rp.trimmed ? " · a large tree: smaller branches are folded into \u201c+N more\u201d (point at one to see them)" : "");
+      render();
+    };
     const setT = t => {
       t = Math.min(data.end, Math.max(data.start, t));
       rp.seek(t);
@@ -805,7 +894,7 @@
       data = await r.json();
       if (!data.peers.length) { status.textContent = "No stored updates cover this window."; rp = null; return; }
       rp = new Replay(data, q("base") ? q("base").value : (opts.base || "best"));
-      status.textContent = `${data.peers.length} RIS peers · ${data.updates.length.toLocaleString()} updates in window`;
+      status.textContent = loaded = `${data.peers.length} RIS peers · ${data.updates.length.toLocaleString()} updates in window`;
       rebuild();
       if (!keepPosition || !rangeCustom) { setRangeInputs(data.start, data.end); rangeCustom = false; }
       syncRange();
@@ -819,11 +908,12 @@
     q("gif-to-slider").onclick = () => { if (rp) { q("gif-to").value = toInput(Math.ceil(rp.t)); rangeCustom = true; syncRange(); } };
     q("gif-reset").onclick = () => { if (rp) { setRangeInputs(data.start, data.end); rangeCustom = false; syncRange(); } };
 
+    let frameAsked = 0;
     slider.addEventListener("input", () => {
       if (!rp) return; stop();
       rp.seek(data.start + (data.end - data.start) * slider.value / 1000);
       following = !!opts.followNow && slider.value >= 1000;
-      render();
+      if (!frameAsked) frameAsked = requestAnimationFrame(() => { frameAsked = 0; render(); });
     });
     q("depth").onchange = rebuild; q("top").onchange = rebuild;
     if (q("base")) q("base").onchange = () => { if (rp) { rp.setBase(q("base").value); render(); } };
@@ -913,10 +1003,10 @@
       if (!rp) return;
       if (timer) return stop();
       const [a, b] = range();
-      frames = rp.frameTimes(240, a, b);   // plays the selected GIF range (whole window by default)
+      frames = rp.frameTimes(240, a, b);   // plays the selected range (whole window by default) in the chosen Length
       fi = frames.findIndex(t => t >= rp.t + 1); if (fi < 0 || fi >= frames.length - 1) fi = 0;
       q("play").textContent = "❚❚ Pause";
-      timer = setInterval(() => { setT(frames[fi++]); if (fi >= frames.length) stop(); }, 70);
+      timer = setInterval(() => { setT(frames[fi++]); if (fi >= frames.length) stop(); }, lengthMs() / frames.length);
     };
     const jumpStart = () => (rp.ev ? Math.max(data.start, rp.ev.start - 1) : data.start);
     const jumpEnd = () => (rp.ev && rp.ev.end ? Math.min(data.end, rp.ev.end + 1) : data.end);
@@ -938,16 +1028,23 @@
       const lo = rp.visSeries.reduce((m, v) => (v[0] >= from && v[1] < m[1] ? v : m), [from, Infinity]);
       setT(lo[0]);
     };
-    if (q("gif")) q("gif").onclick = async () => {
+    // Export the selected range as a GIF or a video (MP4 where the browser can record it, else WebM). Length / Frames
+    // set the pace; the first and last frame stay up HOLD ms more.
+    const HOLD = 2000;
+    const VIDEO_TYPES = ["video/mp4;codecs=avc1.640033", "video/mp4;codecs=avc1", "video/mp4", "video/webm;codecs=vp9", "video/webm"];
+    const sleep = ms => new Promise(res => setTimeout(res, ms));
+    async function exportAs(kind) {
       if (!rp) return;
-      const btn = q("gif"), gs = q("gifstatus"); btn.disabled = true; stop();
+      const btns = [q("gif"), q("video")].filter(Boolean), gs = q("gifstatus");
+      btns.forEach(b => { b.disabled = true; }); stop();
+      const keepT = rp.t, keepRowH = rp.rowH;
       try {
-        gs.textContent = "Loading encoder…";
-        await loadScript("/static/vendor/gif.js");
-        const nFrames = parseInt(q("frames").value), delay = parseInt(q("delay").value);
+        const type = kind === "video" && VIDEO_TYPES.find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t));
+        if (kind === "video" && !type) throw "this browser can't record video: try Export GIF";
+        const nFrames = parseInt(frSel.value), delay = Math.max(20, Math.round(lengthMs() / (nFrames - 1)));
         const [a, b] = range();
         if (!(b > a)) throw "the From time must be before the To time";
-        // A sub-range gets its own replay: the GIF's tree layout, timeline and colors are scoped to it.
+        // A sub-range gets its own replay: the export's tree layout, timeline and colors are scoped to it.
         let g = rp;
         if ((a > data.start + 1 || b < data.end - 1) && !data.stitch) {   // (events together: the replay already has it)
           gs.textContent = "Loading range…";
@@ -957,39 +1054,75 @@
           const r = await fetch((many ? "/api/replay/compare?" : "/api/replay?") + qs);
           if (!r.ok) throw "could not load the selected range";
           const d2 = await r.json();
-          if (rp.ev) { d2.event = rp.ev; d2.events = [rp.ev]; }
+          if (rp.ev) { d2.event = rp.ev; d2.events = [rp.ev, ...(d2.events || []).filter(e => e.id !== rp.ev.id)]; }
+          if (rp.marks.length) d2.marks = rp.marks;
           g = new Replay(d2, rp.ev && a < rp.ev.start ? rp.baseMode : (q("base") ? q("base").value : "start"));
           g.build(parseInt(q("depth").value), parseInt(q("top").value), nbrsMode());
         }
-        const keepRowH = rp.rowH;
-        g.rowH = 20;   // GIFs always use full spacing, whatever the on-screen Size setting
+        g.rowH = 20;   // exports always use full spacing, whatever the on-screen Size setting
+        g.captions = !!(capBox && capBox.checked);
         const W = 1200, { H } = g.size(W);
-        const off = document.createElement("canvas"); off.width = W; off.height = H;
-        const ctx = off.getContext("2d", { willReadFrequently: true });
-        const gif = new GIF({ workers: 2, quality: 10, width: W, height: H, workerScript: "/static/vendor/gif.worker.js" });
-        const keepT = rp.t, label = rp.ev ? `event ${rp.ev.id}`
-          : data.stitch ? `events ${rp.events.map(e => e.id).join(", ")}` : `${data.prefix}`;
-        g.frameTimes(nFrames, a, b).forEach((t, i, ts) => {
-          g.seek(t);
-          g.draw(ctx, W, { footer: `bgpcanary · ${label}` });
-          gif.addFrame(ctx, { copy: true, delay: i === 0 || i === ts.length - 1 ? 1500 : delay });
-          if (i % 10 === 0) gs.textContent = `Rendering frames ${i}/${nFrames}…`;
-        });
-        rp.seek(data.start); rp.seek(keepT);
-        rp.rowH = keepRowH;
-        gif.on("progress", p => gs.textContent = `Encoding GIF ${Math.round(p * 100)}%…`);
-        const blob = await new Promise(res => { gif.on("finished", res); gif.render(); });
+        // a video is drawn 1.5x for sharper text, even-sized and within H.264's 4096x2304
+        const sc = kind === "video" ? Math.min(1.5, 2304 / H) : 1;
+        const off = document.createElement("canvas");
+        off.width = 2 * Math.round(W * sc / 2); off.height = 2 * Math.round(H * sc / 2);
+        const ctx = off.getContext("2d", { willReadFrequently: kind === "gif" });
+        ctx.setTransform(sc, 0, 0, sc, 0, 0);
+        const label = rp.ev ? `event ${rp.ev.id}` : data.stitch ? `events ${rp.events.map(e => e.id).join(", ")}` : `${data.prefix}`;
+        const frame = t => { g.seek(t); g.draw(ctx, W, { footer: `bgpcanary · ${label}` }); };
+        const times = g.frameTimes(nFrames, a, b), wait = i => (i === 0 || i === times.length - 1 ? HOLD : delay);
+        let blob;
+        if (kind === "gif") {
+          gs.textContent = "Loading encoder…";
+          await loadScript("/static/vendor/gif.js");
+          const gif = new GIF({ workers: 2, quality: 10, width: off.width, height: off.height, workerScript: "/static/vendor/gif.worker.js" });
+          times.forEach((t, i) => {
+            frame(t);
+            gif.addFrame(ctx, { copy: true, delay: wait(i) });
+            if (i % 10 === 0) gs.textContent = `Rendering frames ${i}/${nFrames}…`;
+          });
+          gif.on("progress", p => { gs.textContent = `Encoding GIF ${Math.round(p * 100)}%…`; });
+          blob = await new Promise(res => { gif.on("finished", res); gif.render(); });
+        } else {
+          // MediaRecorder stamps frames by the wall clock, so the video is recorded in real time, at the chosen pace
+          const stream = off.captureStream(0), track = stream.getVideoTracks()[0];
+          const rec = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: 8e6 }), chunks = [];
+          rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+          const done = new Promise(res => { rec.onstop = res; });
+          const total = Math.round((lengthMs() + 2 * HOLD) / 1000);
+          rec.start();
+          for (let i = 0; i < times.length; i++) {
+            frame(times[i]); track.requestFrame();
+            if (i % 5 === 0) gs.textContent = `Recording ${Math.round((i + 1) / times.length * 100)}%: about ${total}s in all, in real time, so keep this tab open…`;
+            await sleep(wait(i));
+          }
+          // one more, so the last frame lasts its whole hold (redrawn: Chrome skips a request for an unchanged canvas)
+          frame(times[times.length - 1]); track.requestFrame();
+          await sleep(50);
+          rec.stop(); await done;
+          stream.getTracks().forEach(t => t.stop());
+          blob = new Blob(chunks, { type: type.split(";")[0] });
+        }
+        const ext = kind === "gif" ? "gif" : type.startsWith("video/mp4") ? "mp4" : "webm";
         const link = document.createElement("a");
         const d = new Date(realT(data, a) * 1000), stamp = `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(d.getMinutes())}`;
         link.href = URL.createObjectURL(blob);
-        link.download = rp.ev ? `bgpcanary-event-${rp.ev.id}-${stamp}.gif` : data.stitch ? `bgpcanary-events-${stamp}.gif`
-          : data.prefixes || data.combined ? `bgpcanary-compare-${stamp}.gif` : `bgpcanary-paths-${stamp}.gif`;
+        link.download = (rp.ev ? `bgpcanary-event-${rp.ev.id}-${stamp}` : data.stitch ? `bgpcanary-events-${stamp}`
+          : data.prefixes || data.combined ? `bgpcanary-compare-${stamp}` : `bgpcanary-paths-${stamp}`) + "." + ext;
         document.body.appendChild(link); link.click(); link.remove();
-        gs.textContent = `Saved ${(blob.size / 1048576).toFixed(1)} MB GIF`;
+        setTimeout(() => URL.revokeObjectURL(link.href), 60000);
+        gs.textContent = `Saved ${(blob.size / 1048576).toFixed(1)} MB ${ext.toUpperCase()}` + (ext === "webm" ? " (this browser can't record MP4)" : "");
       } catch (e) {
-        gs.textContent = "GIF export failed: " + e;
-      } finally { btn.disabled = false; }
-    };
+        gs.textContent = "Export failed: " + e;
+      } finally {
+        rp.seek(data.start); rp.seek(keepT);
+        rp.rowH = keepRowH;
+        btns.forEach(b => { b.disabled = false; });
+        render();
+      }
+    }
+    if (q("gif")) q("gif").onclick = () => exportAs("gif");
+    if (q("video")) q("video").onclick = () => exportAs("video");
     return { load, isFollowing: () => following && !timer };
   };
 

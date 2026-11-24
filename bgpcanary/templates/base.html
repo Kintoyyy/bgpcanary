@@ -54,7 +54,7 @@ function hideSupport() {
   document.getElementById("support-strip").style.display = "none";
 }
 </script>
-<main class="wrap">
+<main class="wrap{% block main_class %}{% endblock %}">
 {% if loading %}
 {# not live yet (first start, restart) or a new prefix's history loading: app.js keeps it up to date, and reloads
    the dashboard once bgpcanary is live #}

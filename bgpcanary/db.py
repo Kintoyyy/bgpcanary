@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS updates (
 );
 CREATE INDEX IF NOT EXISTS idx_updates_ts ON updates(ts);
 CREATE INDEX IF NOT EXISTS idx_updates_prefix_peer ON updates(prefix, collector, peer, ts);
+-- a prefix's updates in a stretch of time, in order (the tree replays): without it, its whole history is read
+CREATE INDEX IF NOT EXISTS idx_updates_prefix_ts ON updates(prefix, ts);
 
 CREATE TABLE IF NOT EXISTS buckets (
     prefix TEXT NOT NULL,
@@ -227,12 +229,23 @@ def kv_set(conn, k, v):
 
 
 def state_at(conn, prefix, ts):
-    """Latest update per (collector, peer) for `prefix` at or before `ts`."""
-    return conn.execute(
-        "SELECT collector, peer, peer_asn, kind, path, ts FROM ("
-        " SELECT collector, peer, peer_asn, kind, path, ts,"
-        "  ROW_NUMBER() OVER (PARTITION BY collector, peer ORDER BY ts DESC, id DESC) rn"
-        " FROM updates WHERE prefix=? AND ts<=?) WHERE rn=1", (prefix, ts)).fetchall()
+    """Latest update per (collector, peer) for `prefix` at or before `ts`. Hops from one peer to the next along
+    idx_updates_prefix_peer, one seek each, rather than reading the prefix's whole history: a busy prefix of a large
+    network keeps millions of rows, which took 20 s and more."""
+    out, col, peer = [], "", ""
+    while True:
+        r = (conn.execute("SELECT collector, peer FROM updates WHERE prefix=? AND collector=? AND peer>? "
+                          "ORDER BY peer LIMIT 1", (prefix, col, peer)).fetchone()
+             or conn.execute("SELECT collector, peer FROM updates WHERE prefix=? AND collector>? "
+                             "ORDER BY collector, peer LIMIT 1", (prefix, col)).fetchone())
+        if not r:
+            return out
+        col, peer = r[0], r[1]
+        row = conn.execute("SELECT collector, peer, peer_asn, kind, path, ts FROM updates WHERE prefix=? AND "
+                           "collector=? AND peer=? AND ts<=? ORDER BY ts DESC, id DESC LIMIT 1",
+                           (prefix, col, peer, ts)).fetchone()
+        if row:
+            out.append(row)
 
 
 # A bucket stores its chains / upstreams JSON only when it changes: NULL means "the same as this prefix's bucket

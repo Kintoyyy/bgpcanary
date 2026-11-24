@@ -6,6 +6,21 @@ anything, and major releases may need you to read the notes before upgrading.
 
 ## [Unreleased]
 
+### Added
+- **Export the path tree as an MP4 video.** Next to *Export GIF* under the tree, *Export MP4* records the selected range as a video, drawn at 1.5x for sharper text. A browser that can't record MP4 (Firefox) saves WebM. The video is recorded in real time, so keep the tab open until it's saved.
+- **Set how long a replay takes.** *Length* (10 s to 2 minutes, 30 s by default) sets the pace of ▶ Play, the video and the GIF, in place of the old *Frame delay*. The first and last frame stay up 2 seconds more. The line next to it says how long each frame lasts and how much of the window it covers. GIFs were too fast: 80 frames at 150 ms ran through hours of routing in 12 seconds.
+- **Event captions.** A band over the tree names the warning and critical events open at the selected moment, with their severity and how long they've lasted, or says none is. It's on the screen and in exports, so a video makes sense to someone who doesn't know the strip's colours. Untick *Event captions* to leave it out.
+- **Events › Export CSV** saves every event that matches the filters, not just the page shown, with start and end times in UTC, duration, type, prefix, title, lowest visibility and a link to each.
+
+### Changed
+- **The Events page uses more of a wide screen, and its times stay on one line.** The start, end and duration columns no longer wrap.
+- **Large networks and peerings: the path tree loads and moves much faster.**
+  - Finding where each RIS peer's route stood at the start of a replay read the prefix's whole stored history. On a prefix with 1.5 million stored updates that took 20 seconds and more; it now takes about half a second.
+  - A new index on the stored updates, by prefix and time, lets a replay read just its own stretch of time: 7x faster on a month of history. It takes about 30 bytes per stored update, and building it makes the first start after upgrading take a little longer on a large database (about 6 seconds per 3 million updates).
+  - A tree with thousands of RIS peers, dozens of exchanges or hundreds of exchange peers ran to thousands of rows, past what the browser can draw. Above 500 rows, first the neighbours that reach you another way fold into one line. Then the smaller branches fold into "+N more", deepest level first. A branch that isn't carrying you never folds, and the line over the tree says when it has trimmed. Moving the slider on such a tree takes about 20 ms a step instead of 300.
+  - The replay's data is sent compressed, about a quarter of the size.
+  - Each upstream's neighbours are looked up on RIPEstat at the same time, not one after another.
+
 ## [1.7.7] - 2026-11-13
 
 ### Added
