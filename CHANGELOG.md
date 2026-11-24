@@ -6,6 +6,15 @@ anything, and major releases may need you to read the notes before upgrading.
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-11-25
+
+### Fixed
+- **An exported MP4 wouldn't play on Windows ("Something went wrong").** It's now a standard MP4 at 30 frames a second, built faster than it plays. You no longer need to keep the tab open while it records.
+
+### Changed
+- **Exports move smoothly and show the time in large type** in a bar over every frame.
+- ***Upstreams* over the tree is a row of tick boxes**, so you can show any mix of upstreams and the exchanges.
+
 ## [1.8.0] - 2026-11-25
 
 ### Added
