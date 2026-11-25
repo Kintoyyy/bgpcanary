@@ -9,6 +9,7 @@
   <label><input type="checkbox" name="info" value="1" {{ 'checked' if info }}> include info (dips, new chains, FYI notices)</label>
   <button type="submit">Filter</button>
   <span class="muted">{{ total }} {{ state ~ ' ' if state }}event{{ 's' if total != 1 }}{% if kind %} of this type{% endif %}</span>
+  <a class="btn" style="margin-left:auto" href="/events/export.csv?state={{ state }}&kind={{ kind }}&severity={{ severity }}&info={{ info }}" title="Every event matching these filters (not just this page), as a spreadsheet">Export CSV</a>
 </form>
 <form class="panel scroll" method="get" action="/events/replay" data-pick>
 <div class="toolbar" style="margin:0 0 8px">
@@ -20,9 +21,9 @@
   {% for e in rows %}
   <tr>
     <td>{% if e.prefix %}<input type="checkbox" name="id" value="{{ e.id }}" aria-label="Select event {{ e.id }}">{% endif %}</td>
-    <td><time data-ts="{{ e.start_ts }}" data-sec="1" data-day></time></td>
-    <td>{% if e.end_ts %}<time data-ts="{{ e.end_ts }}" data-sec="1"></time>{% else %}<span class="badge b-{{ 'info' if e.severity == 'info' else 'critical' }}">open</span>{% endif %}</td>
-    <td>{{ ((e.end_ts or now) - e.start_ts)|dur }}</td>
+    <td class="when"><time data-ts="{{ e.start_ts }}" data-sec="1" data-day></time></td>
+    <td class="when">{% if e.end_ts %}<time data-ts="{{ e.end_ts }}" data-sec="1"></time>{% else %}<span class="badge b-{{ 'info' if e.severity == 'info' else 'critical' }}">open</span>{% endif %}</td>
+    <td class="when">{{ ((e.end_ts or now) - e.start_ts)|dur }}</td>
     <td><span class="badge b-{{ e.severity }}">{{ e.severity }}</span></td>
     <td class="muted" style="white-space:nowrap"><a class="kind" href="?state={{ state }}&kind={{ e.kind }}&severity={{ severity }}&info={{ info }}" title="Only this type">{{ kind_names.get(e.kind, e.kind.replace('_', ' ')) }}</a></td>
     <td class="mono muted">{{ e.prefix or '' }}</td>

@@ -25,7 +25,7 @@ On Rocky Linux, AlmaLinux or RHEL:
 
 ```bash
 sudo dnf -y install git
-git clone https://github.com/gregsowell/bgpcanary.git
+git clone https://github.com/Kintoyyy/bgpcanary.git
 cd bgpcanary
 sudo ./deploy/install.sh --fqdn bgp.example.com
 ```
@@ -35,7 +35,7 @@ doesn't ship, so bash comes first:
 
 ```bash
 apk add bash git
-git clone https://github.com/gregsowell/bgpcanary.git
+git clone https://github.com/Kintoyyy/bgpcanary.git
 cd bgpcanary
 ./deploy/install.sh --fqdn bgp.example.com
 ```
@@ -49,7 +49,7 @@ The installer takes a few minutes. It:
 - starts the `bgpcanary` service (systemd, or OpenRC on Alpine);
 - creates an `admin` login with a random password, which it prints and also saves in `/etc/bgpcanary/initial-admin-password`.
 
-Prefer not to use git? Download the release `.tar.gz` from the [Releases page](https://github.com/gregsowell/bgpcanary/releases), then:
+Prefer not to use git? Download the release `.tar.gz` from the [Releases page](https://github.com/Kintoyyy/bgpcanary/releases), then:
 
 ```bash
 tar xzf bgpcanary-*.tar.gz && cd bgpcanary-* && sudo ./deploy/install.sh --fqdn bgp.example.com

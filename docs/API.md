@@ -247,5 +247,5 @@ starts with the same word in brackets, `[BGP WARNING] …`.
 
 Acting on bgpcanary (filing a neighbour as a peer, starting a traceroute, changing settings) stays in the web UI
 for now, as do the replay trees, the visibility series and the Path finder: those are the pages' own data and
-change with them. If your script needs something that isn't here, [open an issue](https://github.com/gregsowell/bgpcanary/issues)
+change with them. If your script needs something that isn't here, [open an issue](https://github.com/Kintoyyy/bgpcanary/issues)
 and say what you'd do with it.

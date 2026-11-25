@@ -1,5 +1,7 @@
 """FastAPI web UI."""
 import asyncio
+import csv
+import io
 import ipaddress
 import json
 import logging
@@ -19,6 +21,7 @@ from fastapi.templating import Jinja2Templates
 from itsdangerous import BadData, URLSafeTimedSerializer
 from starlette.datastructures import MutableHeaders
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.gzip import GZipMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import (REPO, __version__, alerts, atlas, auth, config, db, evidence, pathfinder, paths, peering, registry, ripe,
@@ -76,6 +79,8 @@ app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
 app.add_middleware(SessionMiddleware, secret_key=cfg.secret_key, session_cookie="bgpcanary",
                    max_age=7 * 86400, same_site="strict",
                    https_only=os.environ.get("BGPCANARY_INSECURE_COOKIES") != "1")
+# the path-tree replays' JSON runs to megabytes and squeezes ~10x: the proxies in deploy/ don't compress
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 app.mount("/static", StaticFiles(directory=os.path.join(HERE, "static")), name="static")
 
 # The headers the bundled nginx adds (deploy/nginx-bgpcanary.conf: keep the two the same). The app sends them itself
@@ -824,6 +829,39 @@ async def events_page(request: Request, kind: str = "", severity: str = "", info
                   info=info, state=state, kinds=kinds, kind_names=KIND_NAMES)
 
 
+@app.get("/events/export.csv")
+async def events_export(request: Request, kind: str = "", severity: str = "", info: int = 0, state: str = ""):
+    """Every event the Events page's filters match (not just one page of them), as a spreadsheet."""
+    user(request)
+    conn = rconn()
+    try:
+        rows, off = [], 0
+        while True:
+            got = api.events_payload(conn, state, kind, severity, info=info, limit=api.LIMIT_MAX, offset=off)["events"]
+            rows += got
+            off += len(got)
+            if len(got) < api.LIMIT_MAX:
+                break
+    finally:
+        conn.close()
+    iso = lambda t: time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(t)) if t else ""   # noqa: E731
+    # (a cell starting with = + - @ would run as a formula in a spreadsheet: AS names come from outside)
+    cell = lambda v: "'" + v if isinstance(v, str) and v[:1] in ("=", "+", "-", "@") else v   # noqa: E731
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow(["id", "start_utc", "end_utc", "duration_s", "open", "severity", "kind", "type", "prefix", "title",
+                "lowest_visible", "baseline", "url"])
+    now = time.time()
+    for e in rows:
+        w.writerow([e["id"], iso(e["start_ts"]), iso(e["end_ts"]), round((e["end_ts"] or now) - e["start_ts"]),
+                    int(e["open"]), e["severity"], e["kind"], cell(e["kind_name"]), e["prefix"] or "",
+                    cell(e["title"]), "" if e["min_visible"] is None else e["min_visible"],
+                    "" if e["baseline"] is None else round(e["baseline"]), e["url"]])
+    stamp = time.strftime("%Y%m%d-%H%M", time.gmtime(now))
+    return PlainTextResponse(out.getvalue(), media_type="text/csv",
+                             headers={"Content-Disposition": f'attachment; filename="bgpcanary-events-{stamp}.csv"'})
+
+
 KIND_NAMES = {t["kind"]: t["name"].replace(" (FYI)", "") for t in config.ALERT_TYPES}
 KIND_NAMES.update({"tracking_limit": "Tracking limit reached", "registry": "Registry problem"})
 
@@ -1252,10 +1290,21 @@ async def api_window_replay(request: Request, prefix: str = None, start: float =
     start = max(start or end - 86400, end - 92 * 86400)
     conn = rconn()
     try:
-        out = await asyncio.to_thread(replay_payload, conn, prefix, start, end)
+        out = await asyncio.to_thread(window_replay, conn, [prefix], start, end)
     finally:
         conn.close()
     return await upstream_neighbors(out)
+
+
+def window_replay(conn, prefixes, s, e, merge=False):
+    """The dashboard's tree replay of `prefixes` from `s` to `e` (runs in a worker thread), merged (merge_replays)
+    for the compare view, with "marks" for its timeline as an event's page has (evidence.range_marks)."""
+    base = db.state_at(conn, prefixes[0], s)   # (one read serves the replay and the marks)
+    parts = [replay_payload(conn, p, s, e, base=base if not n else None) for n, p in enumerate(prefixes)]
+    out = merge_replays(parts) if merge else parts[0]
+    out["marks"] = evidence.range_marks(conn, cfg, prefixes, s, e, out["events"], svc.atlas.label,
+                                        lambda a: names(conn, a), state=base)
+    return out
 
 
 MAX_STRANDS = 12   # strand colors in replay.js
@@ -1299,10 +1348,9 @@ async def api_compare_replay(request: Request, prefixes: str, start: float = Non
     start = max(start or end - 86400, end - 92 * 86400)
     conn = rconn()
     try:
-        parts = [await asyncio.to_thread(replay_payload, conn, p, start, end) for p in want]
+        out = await asyncio.to_thread(window_replay, conn, want, start, end, merge=True)
     finally:
         conn.close()
-    out = merge_replays(parts)
     if combine:   # one strand: every (peer, prefix) pair counts as a path, no per-prefix colors
         del out["peer_prefix"], out["prefixes"]
         out["prefix"] = f"{len(want)} prefixes combined"

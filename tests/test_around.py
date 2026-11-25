@@ -387,6 +387,23 @@ def test_the_timeline_gets_a_mark_for_each_thing_the_panel_lists(scene, admin_cl
     assert 'data-rp="note"' in page and "The pins on the strip are what" in page and "with a pin on its timeline" in page
 
 
+def test_the_dashboards_timeline_gets_the_same_marks(scene, admin_client):
+    win = {"start": T0 - 1800, "end": T0 + 1815}
+    d = admin_client.get("/api/replay", params={"prefix": P1, **win}).json()
+    kinds = [(m["kind"], m["level"]) for m in d["marks"] if m["kind"] != "event"]
+    assert kinds == [("ping", "critical"), ("routes", "info"), ("ping", "warning")]   # (no event's own round to leave out)
+    assert next(m for m in d["marks"] if m["kind"] == "routes")["text"].startswith(f"27 of 40 RIS peers changed their path to {P1}")
+    # a pin where each event the strip shades begins (not the info one, nor one open before the window)
+    assert [m["id"] for m in d["marks"] if m["kind"] == "event"] == [9006, 9001, 9003]
+    # several prefixes: each event once, though one of no prefix is in each prefix's replay
+    c = admin_client.get("/api/replay/compare", params={"prefixes": f"{P1},{P2}", **win}).json()
+    ids = [m["id"] for m in c["marks"] if m["kind"] == "event"]
+    assert len(ids) == len(set(ids)) and 9001 in ids and any(m["kind"] == "routes" for m in c["marks"])
+    # a window longer than a week: the events, no route changes or RIPE Atlas rounds
+    wide = admin_client.get("/api/replay", params={"prefix": P1, "start": T0 - 1800, "end": T0 + 8 * 86400}).json()
+    assert {m["kind"] for m in wide["marks"]} == {"event"}
+
+
 def test_marks_of_a_long_event_and_of_a_stretch_not_heard(scene, web):
     from bgpcanary import db, evidence
     conn = scene

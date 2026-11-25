@@ -44,6 +44,6 @@ ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["python", "-m", "bgpcanary.container"]
 LABEL org.opencontainers.image.title="bgpcanary" \
       org.opencontainers.image.description="An early warning for your BGP routes: visibility, hijack, leak and upstream monitoring for networks with their own ASN" \
-      org.opencontainers.image.source="https://github.com/gregsowell/bgpcanary" \
-      org.opencontainers.image.documentation="https://github.com/gregsowell/bgpcanary/blob/main/docs/DOCKER.md" \
+      org.opencontainers.image.source="https://github.com/Kintoyyy/bgpcanary" \
+      org.opencontainers.image.documentation="https://github.com/Kintoyyy/bgpcanary/blob/main/docs/DOCKER.md" \
       org.opencontainers.image.licenses="FSL-1.1-ALv2"

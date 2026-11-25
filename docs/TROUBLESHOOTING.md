@@ -252,7 +252,7 @@ history and events are kept regardless.
 
 ## Something else
 
-[Open an issue](https://github.com/gregsowell/bgpcanary/issues) with:
+[Open an issue](https://github.com/Kintoyyy/bgpcanary/issues) with:
 - your bgpcanary version (bottom of every page);
 - your OS version;
 - what you expected and what happened;

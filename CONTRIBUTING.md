@@ -4,7 +4,7 @@ Thanks for helping! Bug reports, ideas and fixes are all welcome.
 
 ## Reporting a bug or asking for a feature
 
-[Open an issue](https://github.com/gregsowell/bgpcanary/issues). For bugs, include:
+[Open an issue](https://github.com/Kintoyyy/bgpcanary/issues). For bugs, include:
 - your bgpcanary version (bottom of every page, or `bgpcanary-admin version`);
 - your OS;
 - what happened versus what you expected;

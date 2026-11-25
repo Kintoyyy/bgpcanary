@@ -103,8 +103,7 @@ def remember_neighbors(conn, u, shown, at):
 async def upstream_neighbors(sourceapp, upstreams):
     """{upstream: [(asn, power)]} - each upstream's own transits/peers (left neighbours), cached 6 h. Each fetch is
     also recorded in the neighbour history (see gone_neighbors)."""
-    out = {}
-    for u in upstreams:
+    async def one(u):
         hit = _NBR.get(u)
         if not hit or time.time() - hit[0] > 6 * 3600:
             try:
@@ -117,8 +116,10 @@ async def upstream_neighbors(sourceapp, upstreams):
             except Exception as ex:
                 log.warning("asn-neighbours AS%s: %s", u, ex)
                 hit = hit or (0, [], set())
-        out[u] = hit[1]
-    return out
+        return hit[1]
+    # (at once, not one after another: a tree with a dozen upstreams waited for each RIPEstat answer in turn)
+    got = await asyncio.gather(*(one(u) for u in upstreams))
+    return dict(zip(upstreams, got))
 
 
 async def backfill_neighbors(sourceapp, u, days=(30, 21, 14, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1)):

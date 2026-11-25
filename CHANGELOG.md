@@ -14,6 +14,47 @@ anything, and major releases may need you to read the notes before upgrading.
   - what you announce to an upstream: it stopped carrying some of your prefixes but kept the others;
   - a registry or filter change in the window, saying when one began too late to have started the event;
   - RIPE's data rather than your network, when the outage check said so.
+- **Time lines on the strip under the tree.** Faint lines at round times (every 5 or 10 minutes up to once a day, depending on how much the strip shows), each with its time. Events replayed together show real times on both sides of a ✂ cut, and the lines follow the strip when it zooms into a From/To range.
+- **The dashboard's tree has the pins an event page's timeline has.** The strip under it marks where each event it shades began, the bursts of route changes, the RIPE Atlas rounds that stood out, and the stretches RIS Live missed. Point at one or drag the slider onto it to see what it was. For a window longer than a week only events and missed stretches get pins.
+- **A *Spacing* setting next to *Size*, for room between the tree's rows.** *Auto* works as before: *Fit to screen* packs a tall tree's rows tighter. *Normal*, *Roomy* and *Spacious* keep the spacing you pick and scroll instead, on screen and in exports.
+
+### Changed
+- **Event captions list every open warning and critical, one line each.** They no longer stop at "+2 more". The band is as tall as the most events open at once during the replay, so the canvas and an export's frames keep one size.
+
+## [1.8.2] - 2026-11-25
+
+### Changed
+- **The timeline follows the playback & export range.** When *From* and *To* pick a stretch of the window, the strip under the tree and the slider show just that stretch, so you can move through it finely. *Whole window* zooms back out, and so does jumping to a moment outside it.
+- **Drag across the strip under the tree to pick a range.** That stretch becomes *From* and *To* in one go, and the timeline zooms in to it. Drag again to zoom further. A plain click still jumps to that moment.
+
+## [1.8.1] - 2026-11-25
+
+### Fixed
+- **An exported MP4 wouldn't play on Windows ("Something went wrong").** It's now a standard MP4 at 30 frames a second, built faster than it plays. You no longer need to keep the tab open while it records.
+
+### Changed
+- **Exports move smoothly and show the time in large type** in a bar over every frame.
+- ***Upstreams* over the tree is a row of tick boxes**, so you can show any mix of upstreams and the exchanges.
+
+## [1.8.0] - 2026-11-25
+
+### Added
+- **Export the path tree as an MP4 video.** Next to *Export GIF* under the tree, *Export MP4* saves the selected range as a standard MP4 file. It plays anywhere, Windows' own players included. The video is H.264 at 30 frames a second, drawn at 1.5x for sharper text, and it's built faster than it plays. A browser with no H.264 encoder saves WebM, recorded in real time. A bar on top of every exported frame (video and GIF) shows the time in large type.
+- **Set how long a replay takes.** *Length* (10 s to 2 minutes, 30 s by default) sets the pace of ▶ Play, the video and the GIF, in place of the old *Frame delay*. Playback and exports move through time smoothly, slowing down where routes change, without jumps. The first and last frame stay up 2 seconds more. The line next to it says how long each frame lasts and how much of the window it covers. GIFs were too fast: 80 frames at 150 ms ran through hours of routing in 12 seconds.
+- **Event captions.** A band over the tree names the warning and critical events open at the selected moment, with their severity and how long they've lasted, or says none is. It's on the screen and in exports, so a video makes sense to someone who doesn't know the strip's colours. Untick *Event captions* to leave it out.
+- **Open and close the tree's branches.** A big tree took a lot of scrolling. *Open* (over the tree) shows all of it, or only its first 1, 2 or 3 levels. Click a node or its name to open or close its branch, in any view. A closed node shows how many branches it holds (▸12), and its count includes them. The choice is remembered, and the open branches stay open when the data reloads and in exports.
+- **Choose which upstreams the tree shows.** *Upstreams* (over the tree) has a tick box for each of your upstreams and one for the exchanges. Untick one to hide its branch; its peers still count at your AS. It works with *Open*, stays picked when the data reloads, and applies to exports.
+- **Events › Export CSV** saves every event that matches the filters, not just the page shown, with start and end times in UTC, duration, type, prefix, title, lowest visibility and a link to each.
+
+### Changed
+- **This copy is a fork: it points at [Kintoyyy/bgpcanary](https://github.com/Kintoyyy/bgpcanary).** Update checks, `bgpcanary-update`, the container image (`ghcr.io/kintoyyy/bgpcanary`) and the documentation's links use the fork. *Settings › About & updates* credits the original, [gregsowell/bgpcanary](https://github.com/gregsowell/bgpcanary) by The Brothers WISP. The support link in the header is gone. The entries below this release keep their links to the original.
+- **Every page uses more of a wide screen** (up to 1840 px, was 1320). On the Events page the start, end and duration columns no longer wrap.
+- **Large networks and peerings: the path tree loads and moves much faster.**
+  - Finding where each RIS peer's route stood at the start of a replay read the prefix's whole stored history. On a prefix with 1.5 million stored updates that took 20 seconds and more; it now takes about half a second.
+  - A new index on the stored updates, by prefix and time, lets a replay read just its own stretch of time: 7x faster on a month of history. It takes about 30 bytes per stored update, and building it makes the first start after upgrading take a little longer on a large database (about 6 seconds per 3 million updates).
+  - A tree with thousands of RIS peers, dozens of exchanges or hundreds of exchange peers ran to thousands of rows, past what the browser can draw. Above 500 rows, first the neighbours that reach you another way fold into one line. Then the smaller branches fold into "+N more", deepest level first. A branch that isn't carrying you never folds, and the line over the tree says when it has trimmed. Moving the slider on such a tree takes about 20 ms a step instead of 300.
+  - The replay's data is sent compressed, about a quarter of the size.
+  - Each upstream's neighbours are looked up on RIPEstat at the same time, not one after another.
 
 ## [1.7.7] - 2026-11-13
 

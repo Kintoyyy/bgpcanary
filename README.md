@@ -73,7 +73,7 @@ On a fresh **Rocky Linux, AlmaLinux or RHEL 9 or 10** server (2 vCPU / 2 GB RAM 
 
 ```bash
 sudo dnf -y install git
-git clone https://github.com/gregsowell/bgpcanary.git
+git clone https://github.com/Kintoyyy/bgpcanary.git
 cd bgpcanary
 sudo ./deploy/install.sh --fqdn bgp.example.com
 ```
@@ -88,11 +88,11 @@ Full instructions, including DNS, certificates and firewall: **[docs/INSTALL.md]
 
 ### Or in a container
 
-An image for Docker and Podman, on amd64 and arm64: `ghcr.io/gregsowell/bgpcanary`.
+An image for Docker and Podman, on amd64 and arm64: `ghcr.io/kintoyyy/bgpcanary`.
 
 ```bash
 mkdir bgpcanary && cd bgpcanary
-curl -fsSLO https://raw.githubusercontent.com/gregsowell/bgpcanary/main/deploy/docker/compose.yaml
+curl -fsSLO https://raw.githubusercontent.com/Kintoyyy/bgpcanary/main/deploy/docker/compose.yaml
 docker compose up -d
 docker compose logs bgpcanary     # the initial admin password
 ```
@@ -141,11 +141,6 @@ rate limits are respected, and the RIPEstat requests identify themselves. Please
 | [RADb IRR](https://www.radb.net/), [PeeringDB](https://www.peeringdb.com/), RPKI via RIPEstat | Registry watch; which of your neighbors are peers at your internet exchanges; whose port a traceroute hop at an exchange is |
 | [RIPE Atlas](https://atlas.ripe.net/) (optional) | Ping and traceroute from probes worldwide; needs your own API key and credits |
 | [Team Cymru](https://www.team-cymru.com/ip-asn-mapping) | IP-to-ASN lookups for traceroute hops |
-
-## Support
-
-bgpcanary is made by [The Brothers WISP](https://thebrotherswisp.com). If it helps your network, please
-support us on [Patreon](https://www.patreon.com/thebrotherswisp).
 
 ## License
 

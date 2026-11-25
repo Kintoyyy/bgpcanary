@@ -13,7 +13,7 @@ container image, and admins see an "update available" badge within a day.
   section of the changelog as the notes. There's nothing to build by hand.
 - **The container image** is built by the same workflow, before the release is published. It's built for amd64
   and arm64 and tested on both with [`deploy/docker/smoke-test.sh`](../deploy/docker/smoke-test.sh). Then it's
-  pushed to `ghcr.io/gregsowell/bgpcanary` as `X.Y.Z`, `X.Y`, `X` and `latest` (a pre-release gets only its own
+  pushed to `ghcr.io/kintoyyy/bgpcanary` as `X.Y.Z`, `X.Y`, `X` and `latest` (a pre-release gets only its own
   tag), with a signed build provenance. If the image fails, no release is published.
 - **[`.github/workflows/ci.yml`](../.github/workflows/ci.yml)** runs on every push and pull request. It catches
   syntax errors in the Python, the shell scripts and the page templates. It also builds the image and runs the
@@ -65,7 +65,7 @@ container image, and admins see an "update available" badge within a day.
    - the *Actions* tab shows the release workflow succeeded;
    - the *Releases* page shows **vX.Y.Z** with your notes;
    - on your own server, `sudo bgpcanary-update --check` reports it, and `sudo bgpcanary-update` installs it;
-   - `docker pull ghcr.io/gregsowell/bgpcanary:X.Y.Z` works without signing in to GitHub. The first time an image is
+   - `docker pull ghcr.io/kintoyyy/bgpcanary:X.Y.Z` works without signing in to GitHub. The first time an image is
      published, GitHub may create the package as *private*. If so, open the package (your profile › *Packages* ›
      bgpcanary › *Package settings*) and change its visibility to *Public* once. Later releases keep that.
 
