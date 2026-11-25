@@ -19,6 +19,7 @@ anything, and major releases may need you to read the notes before upgrading.
 - **A *Spacing* setting next to *Size*, for room between the tree's rows.** *Auto* works as before: *Fit to screen* packs a tall tree's rows tighter. *Normal*, *Roomy* and *Spacious* keep the spacing you pick and scroll instead, on screen and in exports.
 
 ### Changed
+- **The dashboard's tree loads faster, and a tab in the background stops reloading it.** It reads a prefix's updates once for the tree and its pins, and each AS path is worked out once instead of at every update: a busy prefix's day (210,000 updates) takes 7.7 s instead of 16.7 s, and the same work also makes event pages' route changes about twice as fast. The tree and charts still refresh every minute, but only while the page is on screen; a tab left in the background catches up when you return to it.
 - **Event captions list every open warning and critical, one line each.** They no longer stop at "+2 more". The band is as tall as the most events open at once during the replay, so the canvas and an export's frames keep one size.
 
 ## [1.8.2] - 2026-11-25

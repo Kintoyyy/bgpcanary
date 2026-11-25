@@ -21,30 +21,46 @@ def chain_text(c, nm):
     return (f"{lbl(c[0])} → " if c[0] else "") + lbl(c[1])
 
 
-def path_changes(conn, prefix, start, end, bookkeeping=False, state=None):
+def window_rows(conn, prefix, start, end):
+    """The stored updates for `prefix` after `start` up to `end`, oldest first, as tuples (ts, collector, peer,
+    peer_asn, kind, path, source): what path_changes and the tree replay read, so one read can serve both."""
+    return conn.execute("SELECT ts, collector, peer, peer_asn, kind, path, source FROM updates WHERE prefix=? AND ts>? "
+                        "AND ts<=? ORDER BY ts, id", (prefix, start, end)).fetchall()
+
+
+def path_changes(conn, prefix, start, end, bookkeeping=False, state=None, rows=None):
     """Every change of a RIS peer's path toward `prefix` between `start` and `end`, oldest first, judged against the
     stored state at `start`: [{"ts", "collector", "peer", "peer_asn", "old", "new", "source", "live"}], old / new the
     paths as ints (None: no route). A re-announcement of the same path is no change. `bookkeeping`: also the rows
     that only correct the stored state (the looking glass's resync, seed rows after a restart, stale withdrawals);
     they count toward the state either way. `state`: db.state_at's rows for `start`, when the caller has them
-    (reading them goes through the prefix's whole history)."""
+    (reading them goes through the prefix's whole history). `rows`: window_rows' for the same stretch, when the
+    caller has read them."""
+    memo = {}   # (a busy day is hundreds of thousands of updates over a few hundred paths: parse each path once)
+
+    def parse(kind, path):
+        if kind != "A" or not path:
+            return None
+        p = memo.get(path)
+        if p is None:
+            p = memo[path] = paths.parse_str(path)
+        return p
     last = {}
     for r in (db.state_at(conn, prefix, start) if state is None else state):
-        last[(r["collector"], r["peer"])] = (paths.parse_str(r["path"]) if r["kind"] == "A" and r["path"] else None,
-                                             r["peer_asn"])
+        last[(r["collector"], r["peer"])] = (parse(r["kind"], r["path"]), r["peer_asn"])
     out = []
-    for r in conn.execute("SELECT ts, collector, peer, peer_asn, kind, path, source FROM updates WHERE prefix=? AND ts>? "
-                          "AND ts<=? ORDER BY ts, id", (prefix, start, end)):
-        k = (r["collector"], r["peer"])
-        new = paths.parse_str(r["path"]) if r["kind"] == "A" and r["path"] else None
+    # (unpacked: faster than a row's columns by name)
+    for ts, col, peer, pasn, kind, path, source in (window_rows(conn, prefix, start, end) if rows is None else rows):
+        k = (col, peer)
+        new = parse(kind, path)
         old, pa = last.get(k, (None, None))
-        last[k] = (new, r["peer_asn"] or pa)
+        last[k] = (new, pasn or pa)
         if old == new:
             continue
-        live = r["source"] in LIVE_SOURCES
+        live = source in LIVE_SOURCES
         if live or bookkeeping:
-            out.append({"ts": r["ts"], "collector": r["collector"], "peer": r["peer"], "peer_asn": r["peer_asn"] or pa,
-                        "old": old, "new": new, "source": r["source"], "live": live})
+            out.append({"ts": ts, "collector": col, "peer": peer, "peer_asn": pasn or pa,
+                        "old": old, "new": new, "source": source, "live": live})
     return out
 
 

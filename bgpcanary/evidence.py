@@ -174,20 +174,20 @@ def _net_moves(chs):
     return sorted(moves.items(), key=lambda x: -x[1]), back
 
 
-def _routes(conn, prefix, label, s, e, B, state):
+def _routes(conn, prefix, label, s, e, B, state, ups=None):
     """What the RIS peers' routes to `prefix` did between `s` and `e`, whether or not it raised an event: the bursts
     of path changes that moved a fair share of the peers (the biggest BURSTS, oldest first, each with where it left
     them), how many smaller ones there were, the peers per upstream at both ends ("changed": the upstreams whose
     count differs) and who moved between the two (paths.movers over the buckets' chains). `B`: the bucket length; a
-    bucket holds the mix as it stood at its end. `state`: the peers' routes at `s` (db.state_at's rows). None when
-    nothing is stored for that stretch."""
+    bucket holds the mix as it stood at its end. `state`: the peers' routes at `s` (db.state_at's rows); `ups`: the
+    stretch's updates, when the caller has read them (changes.window_rows). None when nothing is stored for it."""
     rows = db.fill_mix(conn, conn.execute("SELECT ts, visible, min_visible, upstreams, chains FROM buckets WHERE prefix=? "
                                           "AND ts>=? AND ts<=? ORDER BY ts", (prefix, s, e)), prefix)
     if not rows:
         return None
     first, last = rows[0], rows[-1]
     floor = max(3, int((first["visible"] or 0) * 0.02))
-    chs = changes.path_changes(conn, prefix, s, e, state=state)
+    chs = changes.path_changes(conn, prefix, s, e, state=state, rows=ups)
     big, small = [], []
     for b in reversed(changes.bursts_of(chs)):   # (bursts_of lists the newest first)
         moves, back = _net_moves(b["changes"])
@@ -358,7 +358,7 @@ def marks(conn, cfg, ev, label_of, name_of, state=None):
     # (a reachability-loss event is itself a ping round: that one is the event on the timeline, not a mark beside it)
     own = json.loads(ev["detail"] or "{}").get("msm") if ev["kind"] == "reachability_loss" else None
     out = _marks(conn, cfg, [prefix] if prefix else [], _spans(ev, s, e, now), s, e, label_of, name_of,
-                 have={s: state[1]} if state and state[0] == prefix else None,
+                 have={prefix: (state[1], None)} if state and state[0] == prefix else None,
                  skip=lambda r: r["msm"] == own and ev["start_ts"] - 120 <= r["ts"] <= (ev["end_ts"] or ev["start_ts"]) + 5)
     for r in _other_events(conn, ev, s, e, now):
         if r["start_ts"] >= s:   # (one already open when the window begins has no moment in it)
@@ -370,12 +370,12 @@ def marks(conn, cfg, ev, label_of, name_of, state=None):
 WIDE = 7 * 86400   # a dashboard window longer than this gets no route-change or RIPE Atlas marks (too much to read)
 
 
-def range_marks(conn, cfg, prefixes, s, e, events, label_of, name_of, state=None):
+def range_marks(conn, cfg, prefixes, s, e, events, label_of, name_of, have=None):
     """The marks (see marks) for the dashboard's timeline from `s` to `e`: the bursts of path changes to `prefixes`
     and the RIPE Atlas rounds that stood out (up to WIDE), what RIS Live missed, and the start of each of `events`
-    (the replay's, which the strip shades) that begins in it. `state`: db.state_at's rows for prefixes[0] at `s`."""
+    (the replay's, which the strip shades) that begins in it. `have`: as _marks takes it."""
     out = _marks(conn, cfg, prefixes if e - s <= WIDE else [], [("", s, e)], s, e, label_of, name_of,
-                 have={s: state} if state is not None else None, pings=e - s <= WIDE)
+                 have=have, pings=e - s <= WIDE)
     seen = set()
     for r in events:
         if r["start"] >= s and r["id"] not in seen:   # (prefixes replayed together list one of no prefix in each)
@@ -388,13 +388,15 @@ def range_marks(conn, cfg, prefixes, s, e, events, label_of, name_of, state=None
 def _marks(conn, cfg, prefixes, spans, s, e, label_of, name_of, have=None, skip=lambda r: False, pings=True):
     """The marks (see marks) of what went on from `s` to `e`, events aside: the bursts of path changes to each of
     `prefixes` in `spans`, the RIPE Atlas rounds that stood out (not those `skip` says), and what RIS Live missed.
-    `have`: {span start: db.state_at's rows} for prefixes[0], when the caller has read them."""
+    `have`: {prefix: (db.state_at's rows at `s`, changes.window_rows' from `s` to `e` or None)} for the prefixes
+    the caller has read."""
     out, bursts, asns = [], [], set()
-    for i, prefix in enumerate(prefixes):
-        st = dict(have or {}) if i == 0 else {}
+    for prefix in prefixes:
+        state, rows = (have or {}).get(prefix, (None, None))
+        st = {s: state} if state is not None else {}
         st.update(_states(conn, prefix, [s0 for _span, s0, _e0 in spans if s0 not in st]))
         for span, s0, e0 in spans:
-            sp = _routes(conn, prefix, span, s0, e0, cfg.bucket_seconds, st[s0])
+            sp = _routes(conn, prefix, span, s0, e0, cfg.bucket_seconds, st[s0], rows if (s0, e0) == (s, e) else None)
             for b in (sp["bursts"] if sp else []):
                 bursts.append((prefix, sp, b))
                 asns.update(a for way, _n in b["moves"] for c in way if c for a in c if a)

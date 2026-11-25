@@ -26,7 +26,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import (REPO, __version__, alerts, atlas, auth, config, db, evidence, pathfinder, paths, peering, registry, ripe,
                tracer, transit, tree, updates, watch)
-from .changes import burst_text, bursts_of, chain_key, path_changes
+from .changes import burst_text, bursts_of, chain_key, path_changes, window_rows
 from .service import Service
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -1012,45 +1012,45 @@ async def event_report(request: Request, eid: int):
     return resp
 
 
-def replay_payload(conn, prefix, s, e, base=None):
+def replay_payload(conn, prefix, s, e, base=None, rows=None):
     """Peer-level path history for [s, e], for the path-tree replay (runs in a worker thread).
 
     Returns the RIB at `s` plus every change inside the window, compactly:
     peers[i] = [collector, peer_ip, peer_asn]; paths[j] = "a b c ... origin";
     init[i] = path index or -1; updates = [[ts, peer_index, path_index_or_-1], ...]
-    `base`: db.state_at's rows for `s`, when the caller has read them.
+    `base`: db.state_at's rows for `s`, `rows`: changes.window_rows' for [s, e], when the caller has read them.
     """
     base = db.state_at(conn, prefix, s) if base is None else base
-    ups = conn.execute("SELECT ts, collector, peer, peer_asn, kind, path FROM updates "
-                       "WHERE prefix=? AND ts>? AND ts<=? ORDER BY ts, id", (prefix, s, e)).fetchall()
+    ups = window_rows(conn, prefix, s, e) if rows is None else rows
     peer_idx, peers, path_idx, plist = {}, [], {}, []
 
-    def pi(r):
-        k = (r["collector"], r["peer"])
-        if k not in peer_idx:
-            peer_idx[k] = len(peers)
-            peers.append([r["collector"], r["peer"], r["peer_asn"]])
-        return peer_idx[k]
+    def pi(col, peer, pasn):
+        i = peer_idx.get((col, peer))
+        if i is None:
+            i = peer_idx[(col, peer)] = len(peers)
+            peers.append([col, peer, pasn])
+        return i
 
-    def pa(r):
-        if r["kind"] != "A" or not r["path"]:
+    def pa(kind, path):
+        if kind != "A" or not path:
             return -1
-        if r["path"] not in path_idx:
-            path_idx[r["path"]] = len(plist)
-            plist.append(r["path"])
-        return path_idx[r["path"]]
+        j = path_idx.get(path)
+        if j is None:
+            j = path_idx[path] = len(plist)
+            plist.append(path)
+        return j
 
     init = {}
     for r in base:
-        init[pi(r)] = pa(r)
+        init[pi(r["collector"], r["peer"], r["peer_asn"])] = pa(r["kind"], r["path"])
     last = dict(init)
     updates = []
-    for r in ups:
-        i, j = pi(r), pa(r)
+    for ts, col, peer, pasn, kind, path, _source in ups:   # (unpacked: faster than a row's columns by name)
+        i, j = pi(col, peer, pasn), pa(kind, path)
         if last.get(i, -1) == j:
             continue  # re-announcement of the same path (communities etc.) - no change for the tree
         last[i] = j
-        updates.append([round(r["ts"], 1), i, j])
+        updates.append([round(ts, 1), i, j])
     asns = set()
     for p in plist:
         asns.update(int(x) for x in p.split())
@@ -1299,11 +1299,12 @@ async def api_window_replay(request: Request, prefix: str = None, start: float =
 def window_replay(conn, prefixes, s, e, merge=False):
     """The dashboard's tree replay of `prefixes` from `s` to `e` (runs in a worker thread), merged (merge_replays)
     for the compare view, with "marks" for its timeline as an event's page has (evidence.range_marks)."""
-    base = db.state_at(conn, prefixes[0], s)   # (one read serves the replay and the marks)
-    parts = [replay_payload(conn, p, s, e, base=base if not n else None) for n, p in enumerate(prefixes)]
+    # one read of each prefix's state and updates serves the replay and the marks (the updates are most of the time)
+    have = {p: (db.state_at(conn, p, s), window_rows(conn, p, s, e)) for p in prefixes}
+    parts = [replay_payload(conn, p, s, e, *have[p]) for p in prefixes]
     out = merge_replays(parts) if merge else parts[0]
     out["marks"] = evidence.range_marks(conn, cfg, prefixes, s, e, out["events"], svc.atlas.label,
-                                        lambda a: names(conn, a), state=base)
+                                        lambda a: names(conn, a), have=have)
     return out
 
 

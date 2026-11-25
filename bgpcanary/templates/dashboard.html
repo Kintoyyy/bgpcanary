@@ -270,8 +270,16 @@ document.addEventListener("DOMContentLoaded", () => {
       loadTree();
     };
   });
+  // Refreshes every `ms` only while the page is on screen: a tab left in the background (a busy tree costs the
+  // server seconds to rebuild) catches up when it's shown again.
+  const every = (f, ms) => {
+    let at = Date.now();
+    const tick = () => { if (!document.hidden && Date.now() - at >= ms - 1000) { at = Date.now(); f(); } };
+    setInterval(tick, ms);
+    document.addEventListener("visibilitychange", tick);
+  };
   loadTree();
-  setInterval(() => loadTree(true), 60000);
+  every(() => loadTree(true), 60000);
 
   // Visibility, chains and churn charts for the selection
   const rg = document.querySelector(".range");
@@ -292,7 +300,7 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   });
   draw(cur);
-  setInterval(() => draw(cur), 60000);
+  every(() => draw(cur), 60000);
 });
 </script>
 {% endblock %}
