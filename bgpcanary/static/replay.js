@@ -77,7 +77,7 @@
       this.D = data;
       this.ev = data.event || null;
       this.events = data.events || (data.event ? [data.event] : []);
-      this.marks = data.marks || [];   // (an event's page: what else went on around it, see markColor)
+      this.marks = data.marks || [];   // (what else went on: around an event on its page, in the window on the dashboard; see markColor)
       // the most warning and critical events open at once (that's at the window's start or at an event's start): the
       // "Event captions" band is that tall all along, so the canvas and an export's frames keep one size
       this.capLines = Math.max(1, ...[data.start, ...this.events.map(e => e.start)]
@@ -676,7 +676,7 @@
           const x = X(s), w = Math.max(2, X(en) - x), short = w < 6;
           ctx.fillStyle = `rgba(${SHADE[sev][0]},${short ? .6 : .18})`;
           ctx.fillRect(x, ty, w, th2);
-          if (short && !this.ev) {   // (on an event's page every event has a pin: see below)
+          if (short && !this.ev && !this.marks.length) {   // (with marks, every event that begins in view has a pin: see below)
             ctx.fillStyle = SHADE[sev][1];
             ctx.beginPath(); ctx.moveTo(x + w / 2 - 6, ty - 8); ctx.lineTo(x + w / 2 + 6, ty - 8); ctx.lineTo(x + w / 2, ty + 2); ctx.closePath(); ctx.fill();
           }
@@ -1024,7 +1024,7 @@
           const hint = document.createElement("div");
           hint.className = "muted";
           hint.textContent = rp.marks.length
-            ? "▼ on the strip under the tree: what else went on around this event. Point at one, click it, or drag the slider onto it."
+            ? `▼ on the strip under the tree: ${rp.ev ? "what else went on around this event" : "events, bursts of route changes, RIPE Atlas rounds that stood out and stretches RIS Live missed"}. Point at one, click it, or drag the slider onto it.`
             : "Shaded stretches and ▼ on the strip under the tree are events. Point at one, click it, or drag the slider onto it.";
           note.append(hint);
         }

@@ -1289,10 +1289,21 @@ async def api_window_replay(request: Request, prefix: str = None, start: float =
     start = max(start or end - 86400, end - 92 * 86400)
     conn = rconn()
     try:
-        out = await asyncio.to_thread(replay_payload, conn, prefix, start, end)
+        out = await asyncio.to_thread(window_replay, conn, [prefix], start, end)
     finally:
         conn.close()
     return await upstream_neighbors(out)
+
+
+def window_replay(conn, prefixes, s, e, merge=False):
+    """The dashboard's tree replay of `prefixes` from `s` to `e` (runs in a worker thread), merged (merge_replays)
+    for the compare view, with "marks" for its timeline as an event's page has (evidence.range_marks)."""
+    base = db.state_at(conn, prefixes[0], s)   # (one read serves the replay and the marks)
+    parts = [replay_payload(conn, p, s, e, base=base if not n else None) for n, p in enumerate(prefixes)]
+    out = merge_replays(parts) if merge else parts[0]
+    out["marks"] = evidence.range_marks(conn, cfg, prefixes, s, e, out["events"], svc.atlas.label,
+                                        lambda a: names(conn, a), state=base)
+    return out
 
 
 MAX_STRANDS = 12   # strand colors in replay.js
@@ -1336,10 +1347,9 @@ async def api_compare_replay(request: Request, prefixes: str, start: float = Non
     start = max(start or end - 86400, end - 92 * 86400)
     conn = rconn()
     try:
-        parts = [await asyncio.to_thread(replay_payload, conn, p, start, end) for p in want]
+        out = await asyncio.to_thread(window_replay, conn, want, start, end, merge=True)
     finally:
         conn.close()
-    out = merge_replays(parts)
     if combine:   # one strand: every (peer, prefix) pair counts as a path, no per-prefix colors
         del out["peer_prefix"], out["prefixes"]
         out["prefix"] = f"{len(want)} prefixes combined"

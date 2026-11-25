@@ -354,34 +354,62 @@ def marks(conn, cfg, ev, label_of, name_of, state=None):
     now = time.time()
     s, e = window(ev, now)
     prefix, _how = focus_prefix(conn, cfg, ev, s, e)
-    spans, out, bursts, asns = _spans(ev, s, e, now), [], [], set()
-    if prefix:
-        have = {s: state[1]} if state and state[0] == prefix else {}
-        have.update(_states(conn, prefix, [s0 for _span, s0, _e0 in spans if s0 not in have]))
-        for span, s0, e0 in spans:
-            sp = _routes(conn, prefix, span, s0, e0, cfg.bucket_seconds, have[s0])
-            for b in (sp["bursts"] if sp else []):
-                bursts.append((sp, b))
-                asns.update(a for way, _n in b["moves"] for c in way if c for a in c if a)
-    names = name_of([a for a in asns if a]) if asns else {}
-    for sp, b in bursts:
-        text = changes.burst_text(b, names)
-        out.append({"t": b["start"], "end": b["end"], "kind": "routes", "level": "info",
-                    "text": f"{b['peers']} of {sp['peers']} RIS peers changed their path to {prefix}" + (f": {text}" if text else "")})
     # (a reachability-loss event is itself a ping round: that one is the event on the timeline, not a mark beside it)
     own = json.loads(ev["detail"] or "{}").get("msm") if ev["kind"] == "reachability_loss" else None
-    for r in _ping_rounds(conn, s, e, label_of):
-        if r["odd"] and not (r["msm"] == own and ev["start_ts"] - 120 <= r["ts"] <= (ev["end_ts"] or ev["start_ts"]) + 5):
-            out.append({"t": r["ts"], "end": None, "kind": "ping", "level": "critical" if r["odd"] == "loss" else "warning",
-                        "text": _round_text(r)})
+    out = _marks(conn, cfg, [prefix] if prefix else [], _spans(ev, s, e, now), s, e, label_of, name_of,
+                 have={s: state[1]} if state and state[0] == prefix else None,
+                 skip=lambda r: r["msm"] == own and ev["start_ts"] - 120 <= r["ts"] <= (ev["end_ts"] or ev["start_ts"]) + 5)
     for r in _other_events(conn, ev, s, e, now):
         if r["start_ts"] >= s:   # (one already open when the window begins has no moment in it)
             out.append({"t": r["start_ts"], "end": r["end_ts"], "kind": "event", "level": r["severity"], "text": r["title"],
                         "id": r["id"]})
-    for a, b in _unheard(conn, prefix, spans)["open"]:
+    return sorted(out, key=lambda m: m["t"])
+
+
+WIDE = 7 * 86400   # a dashboard window longer than this gets no route-change or RIPE Atlas marks (too much to read)
+
+
+def range_marks(conn, cfg, prefixes, s, e, events, label_of, name_of, state=None):
+    """The marks (see marks) for the dashboard's timeline from `s` to `e`: the bursts of path changes to `prefixes`
+    and the RIPE Atlas rounds that stood out (up to WIDE), what RIS Live missed, and the start of each of `events`
+    (the replay's, which the strip shades) that begins in it. `state`: db.state_at's rows for prefixes[0] at `s`."""
+    out = _marks(conn, cfg, prefixes if e - s <= WIDE else [], [("", s, e)], s, e, label_of, name_of,
+                 have={s: state} if state is not None else None, pings=e - s <= WIDE)
+    seen = set()
+    for r in events:
+        if r["start"] >= s and r["id"] not in seen:   # (prefixes replayed together list one of no prefix in each)
+            seen.add(r["id"])
+            out.append({"t": r["start"], "end": r["end"], "kind": "event", "level": r["severity"], "text": r["title"],
+                        "id": r["id"]})
+    return sorted(out, key=lambda m: m["t"])
+
+
+def _marks(conn, cfg, prefixes, spans, s, e, label_of, name_of, have=None, skip=lambda r: False, pings=True):
+    """The marks (see marks) of what went on from `s` to `e`, events aside: the bursts of path changes to each of
+    `prefixes` in `spans`, the RIPE Atlas rounds that stood out (not those `skip` says), and what RIS Live missed.
+    `have`: {span start: db.state_at's rows} for prefixes[0], when the caller has read them."""
+    out, bursts, asns = [], [], set()
+    for i, prefix in enumerate(prefixes):
+        st = dict(have or {}) if i == 0 else {}
+        st.update(_states(conn, prefix, [s0 for _span, s0, _e0 in spans if s0 not in st]))
+        for span, s0, e0 in spans:
+            sp = _routes(conn, prefix, span, s0, e0, cfg.bucket_seconds, st[s0])
+            for b in (sp["bursts"] if sp else []):
+                bursts.append((prefix, sp, b))
+                asns.update(a for way, _n in b["moves"] for c in way if c for a in c if a)
+    names = name_of([a for a in asns if a]) if asns else {}
+    for prefix, sp, b in bursts:
+        text = changes.burst_text(b, names)
+        out.append({"t": b["start"], "end": b["end"], "kind": "routes", "level": "info",
+                    "text": f"{b['peers']} of {sp['peers']} RIS peers changed their path to {prefix}" + (f": {text}" if text else "")})
+    for r in _ping_rounds(conn, s, e, label_of) if pings else []:
+        if r["odd"] and not skip(r):
+            out.append({"t": r["ts"], "end": None, "kind": "ping", "level": "critical" if r["odd"] == "loss" else "warning",
+                        "text": _round_text(r)})
+    for a, b in _unheard(conn, None, spans)["open"]:
         out.append({"t": a, "end": b, "kind": "unheard", "level": "info",
                     "text": "RIS Live wasn't being received, and RIPE's archive hasn't filled this stretch in yet"})
-    return sorted(out, key=lambda m: m["t"])
+    return out
 
 
 def collect(conn, cfg, ev, atlas_payload, nbrs, label_of, name_of):
