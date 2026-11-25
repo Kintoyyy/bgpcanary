@@ -1,0 +1,17 @@
+{# Possible causes, by fixed rules over the evidence (evidence.causes): no guessing beyond what the routes and the
+   other events of the window show. #}
+{% if evd.causes is defined %}
+<div class="panel" id="causes">
+  <h2>Possible causes</h2>
+  {% if evd.causes %}
+  <p class="muted" style="margin-top:0;font-size:13px">From fixed rules over the routes and the other events in the half hour either side. Each one fits what bgpcanary saw; none is proven.</p>
+  <ul style="margin:0;padding-left:20px">
+    {% for c in evd.causes %}
+    <li style="margin-bottom:6px"><strong>{{ c.title }}.</strong> {{ c.text }}{% if c.path %}<br><span class="muted" style="font-size:12px">e.g.</span> <span class="mono" style="font-size:12px">{{ c.path }}</span>{% endif %}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted" style="margin:0">None of the rules matched: no peer leak, no upstream taking your route from someone else, no upstream dropping your prefixes, no registry or filter change in the window, and nothing pointing at RIPE's data.</p>
+  {% endif %}
+</div>
+{% endif %}

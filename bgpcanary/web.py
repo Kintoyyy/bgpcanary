@@ -945,7 +945,8 @@ async def neighbour_page(request: Request, asn: int, msg: str = ""):
 
 async def _evidence(conn, ev):
     nbrs = await tree.upstream_neighbors(svc.sourceapp, sorted(set(cfg.expected_upstreams)))
-    return evidence.collect(conn, cfg, ev, atlas_payload, nbrs, svc.atlas.label, lambda a: names(conn, a))
+    return evidence.collect(conn, cfg, ev, atlas_payload, nbrs, svc.atlas.label, lambda a: names(conn, a),
+                            peer_of=svc.engine.peer_group)
 
 
 async def report_response(eid):
