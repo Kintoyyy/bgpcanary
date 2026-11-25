@@ -5,6 +5,7 @@ import ipaddress
 import json
 import statistics
 import time
+from collections import Counter
 
 from . import changes, db, paths
 
@@ -412,9 +413,147 @@ def _marks(conn, cfg, prefixes, spans, s, e, label_of, name_of, have=None, skip=
     return out
 
 
-def collect(conn, cfg, ev, atlas_payload, nbrs, label_of, name_of):
+FILTER_KINDS = ("asset_change", "irr_change", "transit_filter", "filter_sim", "registry")
+
+
+def _path_findings(cfg, rows, peer_of):
+    """What one moment's stored routes (db.state_at's rows) say about leaks and upstreams: {"strong"/"weak": {peer:
+    Counter(path)}} for exchange peers seen passing your route on (strong: one of your expected upstreams is in front
+    of the peer, which never learns you from a peer honestly; weak: the peer passes on what it got from your upstream,
+    honest only toward its own customers), {"indirect": {upstream: Counter(path)}} for paths that go through one of
+    your upstreams further out than its link to you, and {"direct": {upstream: n}}."""
+    ups = set(cfg.expected_upstreams)
+    out = {"strong": {}, "weak": {}, "indirect": {}, "direct": Counter()}
+    for r in rows:
+        if r["kind"] != "A" or not r["path"]:
+            continue
+        p = paths.parse_str(r["path"])
+        if len(p) < 2 or p[-1] != cfg.asn:
+            continue
+        if p[-2] in ups:
+            out["direct"][p[-2]] += 1
+        for u in ups.intersection(p[:-2]):
+            out["indirect"].setdefault(u, Counter())[r["path"]] += 1
+        for i in range(1, len(p) - 1):
+            a = p[i]
+            if a in ups or not peer_of(a):
+                continue
+            k = "strong" if ups.intersection(p[:i]) else "weak" if p[i + 1] in ups else None
+            if k:
+                out[k].setdefault(a, Counter())[r["path"]] += 1
+    return out
+
+
+def _findings(cfg, mixes, prefix, moments, peer_of):
+    """The facts the possible causes are drawn from (see causes()): the routes at the mix's moments (findings from
+    the ones after the event began, the biggest count of each over them), and every monitored prefix's upstream mix."""
+    visible = max(1, mixes[prefix]["moments"][0]["visible"] or 0)
+    # an exchange member counts only once seen right next to you: being at the same exchange isn't peering with you
+    # shortcut: a peer never seen next to you in these moments isn't judged; the engine's own peer-leak event still is
+    adjacent = {paths.upstream(paths.parse_str(r["path"])) for rows in moments for r in rows
+                if r["kind"] == "A" and r["path"]}
+    near = lambda a: a in adjacent and peer_of(a)   # noqa: E731
+    best = {"strong": {}, "weak": {}, "indirect": {}, "direct": {}}
+    for rows in moments[1:]:
+        f = _path_findings(cfg, rows, near)
+        for k in ("strong", "weak", "indirect"):
+            for a, c in f[k].items():
+                if sum(c.values()) > sum(best[k].get(a, Counter()).values()):
+                    best[k][a] = c
+                    if k == "indirect":
+                        best["direct"][a] = f["direct"][a]
+    leaks = {}
+    for a in set(best["strong"]) | set(best["weak"]):
+        st, wk = best["strong"].get(a, Counter()), best["weak"].get(a, Counter())
+        if sum(st.values()) >= 3 or sum(st.values()) + sum(wk.values()) >= 0.1 * visible:
+            leaks[a] = st + wk
+    floor = max(3, 0.02 * visible)
+    indirect = {u: (c, best["direct"].get(u, 0)) for u, c in best["indirect"].items()
+                if sum(c.values()) >= floor and sum(c.values()) > best["direct"].get(u, 0)}
+    # an upstream that takes the leaked route instead of yours: the leak explains its drop, not your link with it
+    bypassed = {u for a in leaks for path in best["strong"].get(a, ()) for u in paths.parse_str(path)
+                if u in cfg.expected_upstreams}
+    drops = {}
+    for u in cfg.expected_upstreams:
+        if u in bypassed:
+            continue
+        lost, kept = [], []
+        for p, m in mixes.items():
+            if not m or len(m["moments"]) < 2:
+                continue
+            b, d = m["moments"][0]["mix"].get(u, 0), m["moments"][1]["mix"].get(u, 0)
+            if b < max(5, 0.1 * (m["moments"][0]["visible"] or 0)):
+                continue   # it didn't carry this prefix to speak of before
+            if d <= 0.2 * b:
+                lost.append((p, b, d))
+            elif d >= 0.6 * b:
+                kept.append((p, b, d))
+        if lost:
+            drops[u] = (lost, kept)
+    return {"leaks": leaks, "indirect": indirect, "drops": drops}
+
+
+def _top(c):
+    return c.most_common(1)[0][0] if c else ""
+
+
+def causes(cfg, ev, d, f, nm):
+    """Possible causes of an event, by fixed rules over what collect() gathered (`f`: _findings), each
+    {"kind", "title", "text", "path"}: a peer leaking your routes, an upstream no longer taking a prefix straight from
+    you, your link with an upstream (all your prefixes lost at once), what you announce to it (some lost, some kept),
+    a registry or filter change in the window, and RIPE's data rather than your network. Possible, not proven."""
+    out, prefix = [], d["prefix"]
+    ago = lambda r: (f"began {abs(int(r['after'])) // 60} min " + ("after" if r["after"] > 0 else "before") + " this event"
+                     if abs(r["after"]) >= 60 else "began at the same time")   # noqa: E731
+    for a, c in sorted(f.get("leaks", {}).items(), key=lambda x: -sum(x[1].values())):
+        out.append({"kind": "leak", "title": f"Peer leak by {nm(a)}", "path": _top(c), "text":
+                    f"{nm(a)} is an exchange peer, so it should pass your routes only to its own customers, but "
+                    f"{sum(c.values())} RIS peers reached {prefix} through it by way of other networks. Ask {nm(a)} to "
+                    f"filter what it sends its transits and peers; a no-export community on your session with it stops "
+                    f"this from your side."})
+    leakers = {f"AS{a}" for a in f.get("leaks", {})}
+    for r in d["related"] + d["already_open"]:
+        if r["kind"] == "peer_leak" and not any(x in r["title"] for x in leakers):
+            out.append({"kind": "leak", "title": "Peer leak", "path": "", "text": f"{r['title']} ({ago(r)})."})
+    for u, (c, direct) in sorted(f.get("indirect", {}).items(), key=lambda x: -sum(x[1][0].values())):
+        p = paths.parse_str(_top(c))
+        via = " → ".join(nm(a) for a in p[p.index(u) + 1:-1]) if u in p else ""
+        out.append({"kind": "indirect", "title": f"{nm(u)} isn't taking {prefix} straight from you", "path": _top(c),
+                    "text": f"{sum(c.values())} RIS peers' paths go through {nm(u)} and then on through {via} instead "
+                    f"of straight to you ({direct} straight from you). Either it no longer gets {prefix} from you (check "
+                    f"that you still announce it to {nm(u)} and that the session is up), or it prefers the other way in "
+                    f"(heavy prepending on your announcement to it makes that likely)."})
+    many = len(cfg.prefixes) > 1
+    for u, (lost, kept) in f.get("drops", {}).items():
+        ls = ", ".join(f"{p} ({b} → {n} RIS peers)" for p, b, n in lost)
+        if kept:
+            out.append({"kind": "announce", "title": f"What you announce to {nm(u)}", "path": "", "text":
+                        f"{nm(u)} stopped carrying {ls} but still carries {', '.join(p for p, _b, _n in kept)}, so the "
+                        f"link is up. Look at your prefix lists or route maps toward {nm(u)}, or ask {nm(u)} whether it "
+                        f"changed its filter for {', '.join(p for p, _b, _n in lost)}."})
+        else:
+            out.append({"kind": "link", "title": f"Your link or session with {nm(u)}", "path": "", "text":
+                        f"{nm(u)} stopped carrying {'all your prefixes at once: ' if many and len(lost) > 1 else ''}{ls}. "
+                        f"That usually means the link or BGP session between you, or {nm(u)} itself."})
+    for r in d["related"]:
+        if r["kind"] in FILTER_KINDS:
+            late = r["after"] >= 60
+            out.append({"kind": "filter", "title": "Registry or filter change", "path": "", "text":
+                        f"{r['title']} ({ago(r)}" + ("; too late to have started it, but it can keep that path closed)."
+                                                     if late else ").")})
+    det = json.loads(ev["detail"] or "{}") if isinstance(ev["detail"], str) else {}
+    cf = det.get("confirm") if isinstance(det.get("confirm"), dict) else {}
+    if cf.get("verdict") == "contradicted" or "RIPE's data looked unreliable" in (det.get("note") or ev["title"]):
+        out.append({"kind": "data", "title": "RIPE's data rather than your network", "path": "", "text":
+                    (cf.get("why") or det.get("note") or ev["title"]).rstrip(".") + "."})
+    return out
+
+
+def collect(conn, cfg, ev, atlas_payload, nbrs, label_of, name_of, peer_of=None):
     """Evidence for one event. `atlas_payload(conn, target, s, e, msm, nbrs=)` builds traceroute views;
-    `label_of(target)` gives a baseline target's label; `name_of(asns)` returns {asn: name}."""
+    `label_of(target)` gives a baseline target's label; `name_of(asns)` returns {asn: name}; `peer_of(asn)`: whether
+    a neighbour is one of your exchange peers (default: the peers listed in the settings)."""
+    peer_of = peer_of or (lambda a: a in cfg.peers)
     ev = dict(ev)
     start = ev["start_ts"]
     end = ev["end_ts"]
@@ -424,7 +563,7 @@ def collect(conn, cfg, ev, atlas_payload, nbrs, label_of, name_of):
     prefix, how = focus_prefix(conn, cfg, ev, s, e)
     out = {"window": (s, e), "prefix": prefix, "prefix_how": how, "related": [], "mix": None, "paths": [], "rv_runs": [],
            "rv_probes": [], "atlas_rounds": [], "atlas_traces": [], "timeline": [], "names": {}}
-    asns = set()
+    asns, finds = set(), {}
 
     out["related"] = _other_events(conn, ev, s, e, now)
     spans = _spans(ev, s, e, now)
@@ -452,6 +591,12 @@ def collect(conn, cfg, ev, atlas_payload, nbrs, label_of, name_of):
                     asns.add(g["upstream"])
                     for p, _n in g["paths"]:
                         asns.update(int(x) for x in p.split() if x.isdigit())
+            mixes = {p: (out["mix"] if p == prefix else _upstream_mix(conn, p, ev, s, e)) for p in cfg.prefixes}
+            mixes.setdefault(prefix, out["mix"])
+            finds = _findings(cfg, mixes, prefix, [states[m["ts"] + B] for m in out["mix"]["moments"]], peer_of)
+            asns.update(finds["leaks"])
+            asns.update(a for c, _n in finds["indirect"].values() for a in paths.parse_str(_top(c)))
+            asns.update(finds["drops"])
 
     out["rv_runs"] = _rv_runs(conn, ev, s, e)
     out["rv_probes"] = db.annotate_probes(conn, conn.execute(
@@ -535,6 +680,7 @@ def collect(conn, cfg, ev, atlas_payload, nbrs, label_of, name_of):
                 f"AS{u} {out['mix']['moments'][0]['mix'].get(u, 0)}→{m['mix'].get(u, 0)}" for u in out["mix"]["upstreams"])
                 + (f"; behind it: {who}" if who else "")))
     out["timeline"] = sorted(tl, key=lambda x: x[0])
+    out["causes"] = causes(cfg, ev, out, finds, nm)
     return out
 
 
@@ -640,6 +786,12 @@ def as_text(cfg, ev, d, link=""):
         w("")
         w(det["note"])
 
+    if d.get("causes"):
+        w("")
+        w("POSSIBLE CAUSES (by fixed rules over the data below: possible, not proven)")
+        w("-" * 72)
+        for c in d["causes"]:
+            w(f"- {c['title']}: {c['text']}" + (f" Example path: {c['path']}" if c["path"] else ""))
     L.extend(around_text(d))
     w("")
     w("TIMELINE (UTC)")

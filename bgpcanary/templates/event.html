@@ -4,6 +4,7 @@
 <h1><span class="badge b-{{ ev.severity }}">{{ ev.severity }}</span> {{ ev.title }}</h1>
 {% if msg %}<div class="msg">{{ msg }}</div>{% endif %}
 {% if nb %}{% include "_neighbour.html" %}{% endif %}
+{% include "_causes.html" %}
 {% set cf = (ev.detail|fromjson).confirm %}
 {% if cf %}
 {# an outage checked against Route Views / Atlas / the control prefixes when it opened (Service._confirm_outage) #}

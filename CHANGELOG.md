@@ -7,6 +7,13 @@ anything, and major releases may need you to read the notes before upgrading.
 ## [Unreleased]
 
 ### Added
+- **Possible causes on every event page.** A short panel at the top lists what the routes and the other events in the half hour either side point at, by fixed rules, each with an example path. It also opens the text evidence report. The rules:
+  - a peer leaking your routes: an exchange peer, seen next to you, that one of your upstreams reaches you through, or that passes your upstream's route on to over a tenth of the RIS peers;
+  - an upstream no longer taking a prefix straight from you: more of the paths through it go on through other networks than come straight from you;
+  - your link or session with an upstream: it stopped carrying all your prefixes at once;
+  - what you announce to an upstream: it stopped carrying some of your prefixes but kept the others;
+  - a registry or filter change in the window, saying when one began too late to have started the event;
+  - RIPE's data rather than your network, when the outage check said so.
 - **Time lines on the strip under the tree.** Faint lines at round times (every 5 or 10 minutes up to once a day, depending on how much the strip shows), each with its time. Events replayed together show real times on both sides of a ✂ cut, and the lines follow the strip when it zooms into a From/To range.
 - **The dashboard's tree has the pins an event page's timeline has.** The strip under it marks where each event it shades began, the bursts of route changes, the RIPE Atlas rounds that stood out, and the stretches RIS Live missed. Point at one or drag the slider onto it to see what it was. For a window longer than a week only events and missed stretches get pins.
 - **A *Spacing* setting next to *Size*, for room between the tree's rows.** *Auto* works as before: *Fit to screen* packs a tall tree's rows tighter. *Normal*, *Roomy* and *Spacious* keep the spacing you pick and scroll instead, on screen and in exports.
