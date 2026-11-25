@@ -6,6 +6,13 @@ anything, and major releases may need you to read the notes before upgrading.
 
 ## [Unreleased]
 
+### Added
+- **Time lines on the strip under the tree.** Faint lines at round times (every 5 or 10 minutes up to once a day, depending on how much the strip shows), each with its time. Events replayed together show real times on both sides of a ✂ cut, and the lines follow the strip when it zooms into a From/To range.
+- **A *Spacing* setting next to *Size*, for room between the tree's rows.** *Auto* works as before: *Fit to screen* packs a tall tree's rows tighter. *Normal*, *Roomy* and *Spacious* keep the spacing you pick and scroll instead, on screen and in exports.
+
+### Changed
+- **Event captions list every open warning and critical, one line each.** They no longer stop at "+2 more". The band is as tall as the most events open at once during the replay, so the canvas and an export's frames keep one size.
+
 ## [1.8.2] - 2026-11-25
 
 ### Changed

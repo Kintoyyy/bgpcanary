@@ -53,8 +53,7 @@
   // one color per prefix when several share one tree (up to 12 strands; more are combined into one)
   const PCOL = ["#2463eb", "#e8710a", "#12a36b", "#9b4dca", "#d23f8a", "#0f9bb5",
                 "#b8860b", "#5c6bc0", "#6d4c41", "#00796b", "#7cb342", "#455a64"];
-  const PRIVATE = "Private peering";
-  const CAPTION_H = 34;   // the "Event captions" band, gap included   // the group for listed peers that aren't at one of your exchanges (peering.py)
+  const PRIVATE = "Private peering";   // the group for listed peers that aren't at one of your exchanges (peering.py)
 
   function theme() {
     return {
@@ -79,6 +78,10 @@
       this.ev = data.event || null;
       this.events = data.events || (data.event ? [data.event] : []);
       this.marks = data.marks || [];   // (an event's page: what else went on around it, see markColor)
+      // the most warning and critical events open at once (that's at the window's start or at an event's start): the
+      // "Event captions" band is that tall all along, so the canvas and an export's frames keep one size
+      this.capLines = Math.max(1, ...[data.start, ...this.events.map(e => e.start)]
+        .filter(t => t >= data.start && t <= data.end).map(t => this.major(t).length));
       this.paths = data.paths.map(s => s.split(" ").map(Number));
       this.toggled = new Set();   // branches opened or closed by a click (see build)
       this.only = null;           // the upstreams (or "x", the exchanges) to show, as keys "asn>upstream"; null: all
@@ -366,7 +369,7 @@
     // ---- drawing ---------------------------------------------------------------------
     size(W) {
       const rowH = this.rowH || 20;   // "Fit to screen" packs rows tighter
-      const ce = (this.chips(W).lines - 1) * 20, extra = ce + (this.captions ? CAPTION_H : 0);
+      const ce = (this.chips(W).lines - 1) * 20, extra = ce + (this.captions ? this.capH() : 0);
       return { W, H: 86 + extra + Math.max(this.rows, 3) * rowH + 24 + 70, rowH, extra, ce };
     }
     // header chips (one per prefix), wrapped onto more lines when they don't fit across
@@ -419,12 +422,13 @@
     }
     // "Event captions": a band under the header naming what's open at the selected moment, so a recording speaks for
     // itself to someone who doesn't know the strip's colours
+    // (one line per open event, stacked)
+    capH() { return 14 + 20 * this.capLines; }   // the band's height, gap included
     drawCaption(ctx, W, y, th) {
-      const open = this.major(this.t), h = CAPTION_H - 6, worst = open[0] && open[0].severity;
+      const open = this.major(this.t), h = this.capH() - 6, worst = open[0] && open[0].severity;
       ctx.fillStyle = worst === "critical" ? th.critbg : worst === "warning" ? th.warnbg : th.codebg;
       ctx.fillRect(16, y, W - 32, h);
-      const cy = y + h / 2;
-      let x = 26;
+      const cy = y + 14, x = 26;
       if (!open.length) {
         ctx.fillStyle = th.ok; ctx.font = "600 13px system-ui, sans-serif"; ctx.fillText("●", x, cy);
         ctx.fillStyle = th.muted; ctx.font = "13px system-ui, sans-serif";
@@ -432,21 +436,18 @@
         return;
       }
       open.forEach((e, i) => {
-        if (x < 0) return;
+        const cy = y + 14 + i * 20;
+        let x = 26;
         const col = e.severity === "critical" ? th.crit : e.severity === "warning" ? th.warn : th.accent;
         const tag = `${e.severity.toUpperCase()}`, since = ` · for ${durText(this.real(this.t) - this.real(e.start))}`;
         let title = e.title;
         ctx.font = "700 12px system-ui, sans-serif"; const wt = ctx.measureText(tag).width;
         ctx.font = "13px system-ui, sans-serif"; const ws = ctx.measureText(since).width;
-        const rest = open.length - i - 1, more = rest ? `  +${rest} more` : "", wm = ctx.measureText(more).width;
-        const room = W - 26 - x - wt - 10 - ws - wm;
-        if (i && room < 140) {   // no room for another: say how many more
-          ctx.fillStyle = th.muted; ctx.fillText(`+${open.length - i} more`, x, cy); x = -1; return;
-        }
+        const room = W - 26 - x - wt - 10 - ws;
         while (title.length > 8 && ctx.measureText(title).width > room) title = title.replace(/…$/, "").slice(0, -1) + "…";
         ctx.fillStyle = col; ctx.font = "700 12px system-ui, sans-serif"; ctx.fillText(tag, x, cy); x += wt + 10;
         ctx.fillStyle = th.text; ctx.font = "13px system-ui, sans-serif"; ctx.fillText(title, x, cy); x += ctx.measureText(title).width;
-        ctx.fillStyle = th.muted; ctx.fillText(since, x, cy); x += ws + 24;
+        ctx.fillStyle = th.muted; ctx.fillText(since, x, cy);
       });
     }
     real(t) { return realT(this.D, t); }
@@ -656,6 +657,9 @@
       const X = t => tx0 + (t - V0) / span * (tx1 - tx0);
       ctx.fillStyle = th.codebg; ctx.fillRect(tx0, ty, tx1 - tx0, th2);
       ctx.save(); ctx.beginPath(); ctx.rect(tx0, 0, tx1 - tx0, H); ctx.clip();   // (what's outside the view)
+      const grid = this.gridTimes(V0, V1);   // faint lines at round times, under everything else
+      ctx.strokeStyle = th.border; ctx.lineWidth = 1;
+      for (const [t] of grid) { const x = Math.round(X(t)) + .5; ctx.beginPath(); ctx.moveTo(x, ty); ctx.lineTo(x, ty + th2); ctx.stroke(); }
       // The events open in the window: one shade per stretch of time and severity, however many overlap there
       // (critical over warning over info: blue, as a brief dip on the charts), and a mark on top of one too short to
       // see as a band (seconds, on a strip of hours).
@@ -743,10 +747,35 @@
       ctx.fillStyle = th.muted; ctx.font = "11px system-ui, sans-serif";
       const rs = this.real(V1) - this.real(V0);
       ctx.fillText(fmtAxis(this.real(V0), rs), tx0, ty + th2 + 14);
-      const et = fmtAxis(this.real(V1), rs); ctx.fillText(et, tx1 - ctx.measureText(et).width, ty + th2 + 14);
-      if (opts.footer) { const w = ctx.measureText(opts.footer).width; ctx.fillText(opts.footer, (W - w) / 2, ty + th2 + 14); }
+      const et = fmtAxis(this.real(V1), rs), etx = tx1 - ctx.measureText(et).width; ctx.fillText(et, etx, ty + th2 + 14);
+      const fw = opts.footer ? ctx.measureText(opts.footer).width : 0, fx = (W - fw) / 2;
+      if (opts.footer) ctx.fillText(opts.footer, fx, ty + th2 + 14);
+      // the grid lines' times, where they don't run into the ends' times, the footer or each other
+      let lastG = tx0 + ctx.measureText(fmtAxis(this.real(V0), rs)).width;
+      for (const [t, r] of grid) {
+        const s = fmtAxis(r, rs), w = ctx.measureText(s).width, lx = X(t) - w / 2;
+        if (lx < lastG + 10 || lx + w > etx - 10 || (fw && lx + w > fx - 10 && lx < fx + fw + 10)) continue;
+        ctx.fillText(s, lx, ty + th2 + 14);
+        lastG = lx + w;
+      }
       this.timeline = { ty, th2, tx0, tx1 };
       ctx.restore();
+    }
+    // The timeline's grid: [moment, real time] at round real times (every 5 min ... every day, about 6 to 10 across
+    // the strip), local midnight and hours aligned. Events replayed together: none in a cut, and the step suits the
+    // replay's span, not the real one with the quiet time in it.
+    gridTimes(V0, V1) {
+      const span = V1 - V0, out = [];
+      const step = [60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400, 172800, 604800]
+        .find(s => span / s <= 10) || 604800;
+      const segs = this.D.stitch ? this.D.stitch.segments : [[V0, V1, V0]];
+      for (const [a, b, r] of segs) {
+        const lo = Math.max(a, V0), hi = Math.min(b, V1);
+        if (lo > hi) continue;
+        const off = -new Date((r + lo - a) * 1000).getTimezoneOffset() * 60;   // (local time: hours and days line up)
+        for (let x = Math.ceil((r + lo - a + off) / step) * step - off; x <= r + hi - a; x += step) out.push([a + x - r, x]);
+      }
+      return out;
     }
     frameTimes(n, T0 = this.D.start, T1 = this.D.end) {
       // half uniform in time, half following update activity, so frames linger where things change; between two
@@ -930,8 +959,12 @@
       try { const v = localStorage.getItem(key); if (v !== null) set(v); } catch (e) { }
       el.addEventListener("change", () => { try { localStorage.setItem(key, get()); } catch (e) { } });
     };
-    const lenSel = q("length"), frSel = q("frames"), capBox = q("captions");
+    const lenSel = q("length"), frSel = q("frames"), capBox = q("captions"), spSel = q("spacing");
     const pick = sel => v => { if ([...sel.options].some(o => o.value === v)) sel.value = v; };
+    // Spacing: the rows' height; "auto" lets Fit to screen pack them (see render)
+    remember(spSel, "bgpcanary.treeSpacing", () => spSel.value, spSel && pick(spSel));
+    if (spSel) spSel.addEventListener("change", () => render());
+    const spacing = () => (spSel && spSel.value !== "auto" ? parseInt(spSel.value) : 0);
     remember(lenSel, "bgpcanary.treeLength", () => lenSel.value, lenSel && pick(lenSel));
     remember(frSel, "bgpcanary.treeFrames", () => frSel.value, frSel && pick(frSel));
     remember(capBox, "bgpcanary.treeCaptions", () => (capBox.checked ? "1" : "0"), v => { capBox.checked = v === "1"; });
@@ -954,9 +987,10 @@
       slider.value = Math.round(1000 * (rp.t - v0) / (v1 - v0));
       const mode = sizeSel ? sizeSel.value : "full";
       const avail = window.innerHeight - 140;
-      rp.rowH = 20;
+      rp.rowH = spacing() || 20;
       k = mode === "full" ? 1 : mode === "compact" ? 0.75 : Math.min(1, avail / rp.size(W).H);   // height doesn't depend on width
-      if (mode === "fit" && k < 0.6) {
+      if (mode === "fit" && spacing()) k = Math.max(0.6, k);   // (a set spacing isn't packed: it scrolls past 60%)
+      else if (mode === "fit" && k < 0.6) {
         // too tall to fit by scaling alone without unreadable text: pack the rows tighter, keep the text >= 60%
         const fixed = rp.size(W).H - rp.rows * 20;
         rp.rowH = Math.max(12, (avail / 0.6 - fixed) / Math.max(rp.rows, 3));
@@ -1224,7 +1258,7 @@
           g.toggled = toggled; g.only = rp.only;
           g.build(parseInt(q("depth").value), parseInt(q("top").value), nbrsMode(), openDepth());
         }
-        g.rowH = 20;   // exports always use full spacing, whatever the on-screen Size setting
+        g.rowH = spacing() || 20;   // exports: full spacing or the one picked, whatever the on-screen Size setting
         g.captions = !!(capBox && capBox.checked);
         const W = 1200, H = g.size(W).H + TOPH;
         // a video is drawn 1.5x for sharper text, even-sized and at most 2160 high (4K: every player decodes it)
