@@ -6,6 +6,8 @@ anything, and major releases may need you to read the notes before upgrading.
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-11-25
+
 ### Added
 - **Possible causes on every event page.** A short panel at the top lists what the routes and the other events in the half hour either side point at, by fixed rules, each with an example path. It also opens the text evidence report. The rules:
   - a peer leaking your routes: an exchange peer, seen next to you, that one of your upstreams reaches you through, or that passes your upstream's route on to over a tenth of the RIS peers;
