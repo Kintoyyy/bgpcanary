@@ -72,7 +72,8 @@ form.inline { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wr
 .err { background: var(--crit-bg); }
 .login { max-width: 360px; margin: 10vh auto; }
 .login label { display: block; margin: 10px 0 4px; color: var(--muted); font-size: 13px; }
-.login input { width: 100%; }
+.login input:not([type=checkbox]) { width: 100%; }
+.login label.remember { display: flex; gap: 6px; align-items: center; color: var(--text); }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
 .dot.ok { background: var(--ok); } .dot.bad { background: var(--crit); } .dot.warn { background: var(--warn); }
 .loading-banner { margin-bottom: 16px; padding: 12px 14px; border: 1px solid var(--border); border-left: 4px solid var(--warn);

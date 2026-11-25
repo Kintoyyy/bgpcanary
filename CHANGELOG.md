@@ -16,6 +16,7 @@ anything, and major releases may need you to read the notes before upgrading.
   - RIPE's data rather than your network, when the outage check said so.
 - **Time lines on the strip under the tree.** Faint lines at round times (every 5 or 10 minutes up to once a day, depending on how much the strip shows), each with its time. Events replayed together show real times on both sides of a ✂ cut, and the lines follow the strip when it zooms into a From/To range.
 - **The dashboard's tree has the pins an event page's timeline has.** The strip under it marks where each event it shades began, the bursts of route changes, the RIPE Atlas rounds that stood out, and the stretches RIS Live missed. Point at one or drag the slider onto it to see what it was. For a window longer than a week only events and missed stretches get pins.
+- **"Keep me signed in" on the login page.** Ticked, the browser stays signed in for up to 30 days (it was 7), as long as it's used at least once a week. Left unticked, the sign-in ends when the browser closes. Browsers already signed in stay signed in as before.
 - **A *Spacing* setting next to *Size*, for room between the tree's rows.** *Auto* works as before: *Fit to screen* packs a tall tree's rows tighter. *Normal*, *Roomy* and *Spacious* keep the spacing you pick and scroll instead, on screen and in exports.
 
 ### Changed

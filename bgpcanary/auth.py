@@ -36,7 +36,7 @@ def set_user(conn, username, pw, role=None, must_change=0):
     if role is not None and role not in ROLES:
         raise ValueError("bad role")
     # A new account starts at a random session version, so if a deleted user's name is created again, cookies
-    # from the old account (still signed, up to 7 days old) don't sign in to the new one.
+    # from the old account (still signed, up to 30 days old) don't sign in to the new one.
     conn.execute("INSERT INTO users(username,pw_hash,created,role,must_change,session_ver) VALUES(?,?,?,?,?,?) "
                  "ON CONFLICT(username) DO UPDATE SET pw_hash=excluded.pw_hash, must_change=excluded.must_change, "
                  "session_ver=session_ver+1" + (", role=excluded.role" if role else ""),
@@ -81,8 +81,8 @@ def delete_user(conn, username):
 
 
 # ---------------------------------------------------------------- server-side sessions
-SESSION_IDLE = 7 * 86400    # unused this long: signed out (the cookie's own lifetime)
-SESSION_MAX = 30 * 86400    # and everyone signs in again at least every 30 days
+SESSION_IDLE = 7 * 86400    # unused this long: signed out
+SESSION_MAX = 30 * 86400    # and everyone signs in again at least every 30 days (a kept cookie's lifetime)
 _TOUCH_EVERY = 300          # "last seen" is written at most every 5 minutes per session
 
 

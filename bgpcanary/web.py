@@ -75,9 +75,24 @@ async def lifespan(app):
     await svc.stop()
 
 
+class Sessions(SessionMiddleware):
+    """A sign-in without "Keep me signed in" (session "keep" 0) gets a cookie that ends with the browser: the Max-Age
+    is dropped from its Set-Cookie. Sessions from before the option (no "keep") stay kept."""
+
+    async def __call__(self, scope, receive, send):
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start" and not scope.get("session", {}).get("keep", 1):
+                message["headers"] = [(k, re.sub(rb"; Max-Age=\d+", b"", v)
+                                       if k == b"set-cookie" and v.startswith(b"bgpcanary=") else v)
+                                      for k, v in message["headers"]]
+            await send(message)
+        await super().__call__(scope, receive, send_wrapper)
+
+
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
-app.add_middleware(SessionMiddleware, secret_key=cfg.secret_key, session_cookie="bgpcanary",
-                   max_age=7 * 86400, same_site="strict",
+# A kept sign-in's cookie lasts as long as the server lets a session live; unused for 7 days still ends it (auth.py).
+app.add_middleware(Sessions, secret_key=cfg.secret_key, session_cookie="bgpcanary",
+                   max_age=auth.SESSION_MAX, same_site="strict",
                    https_only=os.environ.get("BGPCANARY_INSECURE_COOKIES") != "1")
 # the path-tree replays' JSON runs to megabytes and squeezes ~10x: the proxies in deploy/ don't compress
 app.add_middleware(GZipMiddleware, minimum_size=1024)
@@ -355,12 +370,14 @@ def cookies_need_https(request):
     return host not in ("localhost", "127.0.0.1", "::1") and not host.endswith(".localhost")
 
 
-def start_session(request, username):
-    """A new server-side session for this browser (a fresh id each time: nothing carries over from before)."""
+def start_session(request, username, keep):
+    """A new server-side session for this browser (a fresh id each time: nothing carries over from before).
+    `keep`: "Keep me signed in" (the cookie outlives the browser, see Sessions)."""
     row = auth.get_user(svc.aconn, username)
     request.session.clear()
     request.session["user"] = username
     request.session["v"] = row["session_ver"] if row else 0
+    request.session["keep"] = 1 if keep else 0
     request.session["sid"] = auth.new_session(svc.aconn, username, client_ip(request),
                                               request.headers.get("user-agent", ""))
     return row
@@ -370,7 +387,7 @@ def keep_session(request, username):
     """After changing your own password or role (which ends all of the account's sessions), stay signed in here
     with a new session; every other browser stays signed out."""
     if request.session.get("user") == username:
-        start_session(request, username)
+        start_session(request, username, request.session.get("keep", 1))
 
 
 def rconn():
@@ -475,7 +492,8 @@ def login_refusal(request, message, status):
 
 
 @app.post("/login")
-async def login(request: Request, username: str = Form(...), password: str = Form(...), next: str = Form("/")):
+async def login(request: Request, username: str = Form(...), password: str = Form(...), next: str = Form("/"),
+                remember: str = Form("")):
     global _login_waiting
     ip = client_ip(request)
     if _login_waiting >= LOGIN_QUEUE_MAX:
@@ -501,7 +519,7 @@ async def login(request: Request, username: str = Form(...), password: str = For
         return render(request, "login.html", next=next, error="Invalid username or password.",
                       need_https=cookies_need_https(request))
     throttle.success(ip, username, device)
-    row = start_session(request, username)
+    row = start_session(request, username, remember)
     if not next.startswith("/") or next.startswith(("//", "/\\")):   # (only ever a page on this site)
         next = "/"
     resp = RedirectResponse("/account/password" if row and row["must_change"] else next, status_code=303)
